@@ -1,94 +1,70 @@
 # LiteGit Workbench 2.0.0 release guide
 
-## Native release targets
+## Release targets
 
 | Target | Package | Recommended minimum |
 |---|---|---|
-| Windows x64 | Single-file `LiteGitWorkbench.exe` in a ZIP archive | Windows 10 22H2 or Windows 11 |
+| Windows | `LiteGitWorkbench.pyz` and `run-portable.cmd` in a ZIP archive | Windows 10 22H2 or Windows 11; Python 3.10+ with Tkinter; Git |
 | Linux x64 | Single-file ELF executable in a `tar.gz` archive | Ubuntu 22.04 or another glibc 2.35+ distribution |
 | macOS Intel | `LiteGit Workbench.app` in a `tar.gz` archive | macOS 11 or later |
 | macOS Apple Silicon | `LiteGit Workbench.app` in a `tar.gz` archive | macOS 11 or later |
 
-Each target must be built natively on its matching operating system and processor architecture. Release packages include Python, Tk/Tcl and the application code. Git remains an external requirement so the application can use the operator's existing credentials, SSH configuration and Git version.
+The Windows package is architecture-neutral Python source packaging. It uses the destination machine's administrator-approved Python and Tk runtime. Git remains an external requirement on every platform so the application can use the operator's existing credentials, SSH configuration and Git version.
 
-## Packaging and protection boundary
+Linux and macOS packages must be built natively on their matching operating system and processor architecture. They include Python and Tk/Tcl.
 
-Releases use the PyInstaller single-file bootloader, Python optimisation level 2 and a compressed PYZ archive. This avoids distributing plain `.py` source files and extracts the runtime into a temporary directory when launched.
+## Windows packaging and protection boundary
 
-This is application packaging, not cryptographic source protection. A suitably skilled analyst may still recover Python bytecode. Secrets, access tokens, passwords and private keys must never be compiled into the application.
+The Windows release uses the Python standard library's ZipApp format with ZIP compression. It contains no EXE, DLL, PyInstaller bootloader or native Python extension. After extraction, double-click `run-portable.cmd`; the launcher uses `py -3` when available and otherwise tries `python`.
 
-If stronger resistance to reverse engineering is required, assess Nuitka native compilation or a commercial protection product separately, including its licensing and maintenance implications.
+ZipApp is a lightweight packaging shell, not cryptographic source protection. A recipient can inspect the Python modules in the archive. Strong anti-reverse-engineering protection requires native code or a protected runtime, which would reintroduce executable or `.pyd` files and may be blocked by the same AppLocker or Windows Defender Application Control policy.
 
-## Signing and operating-system warnings
+Never include secrets, access tokens, passwords or private keys in any package.
 
-- An unsigned Windows build may display SmartScreen warnings or be blocked by an organisation's AppLocker or Windows Defender Application Control policy.
-- An unsigned and unnotarised macOS build may be blocked by Gatekeeper on first launch.
-- A Linux single-file build inherits the minimum glibc version of its build environment.
-
-Public distribution should use an Authenticode certificate for Windows and Developer ID signing plus Apple notarisation for macOS. The automated workflow does not invent or embed signing credentials.
-
-## Local build
-
-Windows:
+## Local Windows portable build
 
 ```powershell
-py -3 -m pip install -r packaging/requirements-build.txt
-py -3 packaging/build_release.py
+py -3 packaging/build_windows_portable.py
 ```
 
-macOS or Linux:
+This command uses only the Python standard library. It:
+
+1. creates `LiteGitWorkbench.pyz`;
+2. runs the archive's headless smoke test with the current Python runtime;
+3. packages the archive, launcher and documentation in a ZIP file;
+4. proves that the ZIP and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files;
+5. writes release metadata and a SHA-256 manifest.
+
+The ignored `.litegit-local-policy.json` continues to block the legacy native Windows builder before it can create a build directory. It does not block the non-EXE portable builder.
+
+## Linux and macOS native builds
 
 ```sh
 python3 -m pip install -r packaging/requirements-build.txt
 python3 packaging/build_release.py
 ```
 
-The build command:
+The native builder creates and smoke-tests the matching ELF executable or macOS application bundle. Unsigned and unnotarised macOS builds may be blocked by Gatekeeper on first launch. A Linux single-file build inherits the minimum glibc version of its build environment.
 
-1. creates the native frozen application;
-2. validates its PE, ELF or Mach-O header and minimum size;
-3. runs the frozen application's headless smoke test;
-4. packages the application with this documentation;
-5. writes release metadata and a SHA-256 manifest.
+## Automated builds and GitHub Releases
 
-## Machine-local Windows build policy
+`.github/workflows/build-native-releases.yml` tests and builds four targets:
 
-To prevent Windows executable packaging on a machine where local binaries are blocked by AppLocker or WDAC, create an ignored `.litegit-local-policy.json` file in the repository root:
+- `windows-latest` creates the non-EXE portable ZIP without installing or invoking PyInstaller;
+- `ubuntu-22.04` creates the Linux x64 native archive;
+- `macos-15-intel` creates the macOS Intel native archive;
+- `macos-15` creates the macOS Apple Silicon native archive.
 
-```json
-{
-  "block_windows_executable_build": true,
-  "reason": "Local AppLocker/WDAC policy blocks unsigned executables."
-}
-```
-
-On Windows, `packaging/build_release.py` checks this policy before creating or deleting any build directory. GitHub Actions is explicitly exempt and continues to build and smoke-test the Windows release.
-
-If local packaging remains permitted but an organisation's AppLocker or WDAC policy blocks only the smoke-test launch, a Windows build may record that limitation explicitly:
-
-```powershell
-py -3 packaging/build_release.py --skip-smoke-test --smoke-test-status blocked_by_applocker_wdac
-```
-
-This option still performs structural verification and records the blocked runtime test truthfully. GitHub Actions never uses this option: every native CI build must pass the real frozen smoke test.
-
-## Automated native builds
-
-`.github/workflows/build-native-releases.yml` builds and tests four independent targets:
-
-- `windows-latest` for Windows x64;
-- `ubuntu-22.04` for Linux x64;
-- `macos-15-intel` for macOS Intel;
-- `macos-15` for macOS Apple Silicon.
-
-Push a `v*` tag or start the workflow manually to create the four downloadable Actions artefacts. Every matrix job runs the full unit and integration suite before packaging.
+A manual workflow run keeps the packages as Actions artefacts. Pushing a `v*` tag additionally creates or updates the matching GitHub Release and attaches all platform archives, metadata and the combined SHA-256 manifest. The Release page therefore provides real platform packages alongside GitHub's automatically generated source archives.
 
 ## Release verification checklist
 
 - The full test suite passes on every target.
-- The frozen smoke test reports version `2.0.0` and `frozen: true`.
-- Structural verification reports the expected executable header.
-- The archive contains the application, Python runtime and Tk/Tcl runtime.
+- The Windows ZipApp smoke test reports version `2.0.0` and `frozen: false`.
+- The Windows archive contains `LiteGitWorkbench.pyz` and `run-portable.cmd`.
+- The Windows archive and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files.
+- Linux and macOS frozen smoke tests report version `2.0.0` and `frozen: true`.
+- Native structural verification reports the expected ELF or Mach-O header.
 - The repository text and Git commit messages contain ASCII-only British English.
 - No private-key marker, access token or personal absolute path appears in source or packaged bytes.
 - SHA-256 values match the generated manifest.

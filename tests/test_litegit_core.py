@@ -134,6 +134,17 @@ class ParserTests(unittest.TestCase):
         self.assertIn("--reword-helper sequence", environment["GIT_SEQUENCE_EDITOR"])
         self.assertNotIn("litegit.py", environment["GIT_SEQUENCE_EDITOR"])
 
+    def test_zipapp_reword_helper_reinvokes_the_archive(self) -> None:
+        with patch.object(litegit.sys, "frozen", False, create=True), patch.object(
+            litegit.sys, "executable", r"C:\Program Files\Python\python.exe"
+        ), patch.object(litegit.sys, "argv", [r"C:\Portable Apps\LiteGitWorkbench.pyz"]):
+            environment = litegit.build_reword_environment("abc123", "New message")
+        sequence_editor = environment["GIT_SEQUENCE_EDITOR"]
+        self.assertIn("python.exe", sequence_editor)
+        self.assertIn("LiteGitWorkbench.pyz", sequence_editor)
+        self.assertIn("--reword-helper sequence", sequence_editor)
+        self.assertNotIn("litegit.py", sequence_editor)
+
 
 @unittest.skipUnless(subprocess.run(["git", "--version"], capture_output=True).returncode == 0, "Git is required")
 class GitIntegrationTests(unittest.TestCase):

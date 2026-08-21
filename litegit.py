@@ -68,6 +68,9 @@ def build_reword_environment(target: str, message: str) -> dict[str, str]:
     executable = _editor_argument(sys.executable)
     if getattr(sys, "frozen", False):
         editor_prefix = f"{executable} --reword-helper"
+    elif Path(sys.argv[0]).suffix.casefold() == ".pyz":
+        archive = _editor_argument(Path(sys.argv[0]).resolve())
+        editor_prefix = f"{executable} {archive} --reword-helper"
     else:
         editor_prefix = f"{executable} {_editor_argument(Path(__file__).resolve())} --reword-helper"
     return {

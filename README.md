@@ -2,9 +2,9 @@
 
 LiteGit Workbench is a compact, cross-platform Git desktop application built with Python and Tk. It provides the everyday repository, branch, history, worktree and remote operations commonly expected from an IDE without carrying a full editor runtime.
 
-The source version requires Python 3.10 or later, Tkinter and Git. Native release packages include Python and Tk/Tcl, so the destination machine only needs Git.
+The source version requires Python 3.10 or later, Tkinter and Git. The Windows portable package has the same runtime requirements and intentionally contains no executable, DLL or native Python extension. Linux and macOS native packages include Python and Tk/Tcl, so those destination machines only need Git.
 
-A checkout may disable local Windows executable packaging with an ignored `.litegit-local-policy.json` file. This does not affect GitHub Actions or release artefacts built on GitHub-hosted runners.
+A checkout may disable local Windows executable packaging with an ignored `.litegit-local-policy.json` file. The supported Windows release builder never invokes PyInstaller and never creates an EXE.
 
 ## Start from source
 
@@ -22,14 +22,14 @@ macOS or Linux:
 ./run.sh
 ```
 
-## Native releases
+## Downloadable releases
 
-- Windows x64: extract and run `LiteGitWorkbench.exe`.
+- Windows: download the portable ZIP, extract it and double-click `run-portable.cmd`. An administrator-approved Python 3.10+ installation with Tkinter and Git must already be available.
 - Linux x64: extract `LiteGitWorkbench`, grant execute permission and run it.
 - macOS Intel: extract and open `LiteGit Workbench.app`.
 - macOS Apple Silicon: extract and open `LiteGit Workbench.app`.
 
-Unsigned builds may display SmartScreen or Gatekeeper warnings. See [RELEASE.md](RELEASE.md) for the complete build, signing and compatibility notes.
+Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
 
 ## Features
 
