@@ -70,7 +70,8 @@ jobs:
         run: |
           mkdir release-upload
           find release-downloads -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.zip.json' -o -name '*.gz.json' \) -exec cp {} release-upload/ \;
-          find release-upload -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 | sort -z | xargs -0 sha256sum > release-upload/SHA256SUMS.txt
+          cd release-upload
+          find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
