@@ -1,0 +1,48 @@
+name: Build native desktop releases
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: Linux x64
+            os: ubuntu-22.04
+          - name: macOS Intel
+            os: macos-15-intel
+          - name: macOS Apple Silicon
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: packaging/requirements-build.txt
+      - name: Install Linux Tk runtime
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk tk-dev
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r packaging/requirements-build.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Build native release
+        run: python packaging/build_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiteGitWorkbench-${{ runner.os }}-${{ runner.arch }}
+          path: release/*
+          if-no-files-found: error
