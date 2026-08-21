@@ -13,9 +13,11 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_POLICY_PATH = PROJECT_ROOT / ".litegit-local-policy.json"
 VERSION = "2.0.0"
 
 
@@ -27,6 +29,34 @@ def normalised_architecture() -> str:
         "arm64": "arm64",
         "aarch64": "arm64",
     }.get(machine, machine or "unknown")
+
+
+def load_local_policy(path: Path = LOCAL_POLICY_PATH) -> dict[str, object]:
+    try:
+        policy = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"The local build policy could not be read: {path}") from error
+    if not isinstance(policy, dict):
+        raise RuntimeError(f"The local build policy must contain a JSON object: {path}")
+    return policy
+
+
+def local_windows_build_is_blocked(
+    policy: dict[str, object],
+    *,
+    environment: Mapping[str, str] | None = None,
+    system: str | None = None,
+) -> bool:
+    current_environment = os.environ if environment is None else environment
+    current_system = platform.system() if system is None else system
+    running_in_github_actions = current_environment.get("GITHUB_ACTIONS", "").casefold() == "true"
+    return (
+        current_system == "Windows"
+        and not running_in_github_actions
+        and policy.get("block_windows_executable_build") is True
+    )
 
 
 def sha256(path: Path) -> str:
@@ -152,6 +182,13 @@ def main() -> int:
         parser.error("--smoke-test-status is required with --skip-smoke-test")
     if arguments.smoke_test_status and not arguments.skip_smoke_test:
         parser.error("--smoke-test-status is only valid with --skip-smoke-test")
+    local_policy = load_local_policy()
+    if local_windows_build_is_blocked(local_policy):
+        reason = str(
+            local_policy.get("reason")
+            or "Local Windows executable builds are disabled by .litegit-local-policy.json."
+        )
+        parser.error(reason)
     build_dir = arguments.build_dir.resolve()
     dist_dir = build_dir / "dist"
     work_dir = build_dir / "work"

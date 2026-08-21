@@ -51,7 +51,20 @@ The build command:
 4. packages the application with this documentation;
 5. writes release metadata and a SHA-256 manifest.
 
-If an organisation's AppLocker or WDAC policy blocks a newly generated unsigned executable before process start, a local Windows build may record that limitation explicitly:
+## Machine-local Windows build policy
+
+To prevent Windows executable packaging on a machine where local binaries are blocked by AppLocker or WDAC, create an ignored `.litegit-local-policy.json` file in the repository root:
+
+```json
+{
+  "block_windows_executable_build": true,
+  "reason": "Local AppLocker/WDAC policy blocks unsigned executables."
+}
+```
+
+On Windows, `packaging/build_release.py` checks this policy before creating or deleting any build directory. GitHub Actions is explicitly exempt and continues to build and smoke-test the Windows release.
+
+If local packaging remains permitted but an organisation's AppLocker or WDAC policy blocks only the smoke-test launch, a Windows build may record that limitation explicitly:
 
 ```powershell
 py -3 packaging/build_release.py --skip-smoke-test --smoke-test-status blocked_by_applocker_wdac

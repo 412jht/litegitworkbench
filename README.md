@@ -4,6 +4,8 @@ LiteGit Workbench is a compact, cross-platform Git desktop application built wit
 
 The source version requires Python 3.10 or later, Tkinter and Git. Native release packages include Python and Tk/Tcl, so the destination machine only needs Git.
 
+A checkout may disable local Windows executable packaging with an ignored `.litegit-local-policy.json` file. This does not affect GitHub Actions or release artefacts built on GitHub-hosted runners.
+
 ## Start from source
 
 Windows:
