@@ -199,6 +199,8 @@ class GitIntegrationTests(unittest.TestCase):
         self.assertEqual(2, len(entries))
         secondary = next(entry for entry in entries if entry.branch == "feature/worktree")
         self.assertEqual(worktree_path.resolve(), Path(secondary.path).resolve())
+        self.assertEqual(self.repository.resolve(), litegit.main_worktree_path(self.repository))
+        self.assertEqual(self.repository.resolve(), litegit.main_worktree_path(worktree_path))
         run_git(self.repository, ["worktree", "remove", str(worktree_path)])
 
     def test_merges_a_selected_branch_into_the_current_branch(self) -> None:

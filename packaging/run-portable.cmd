@@ -1,5 +1,6 @@
 @echo off
 setlocal
+cd /d "%~dp0"
 set "LITEGIT_ARCHIVE=%~dp0LiteGitWorkbench.pyz"
 
 where py >nul 2>nul

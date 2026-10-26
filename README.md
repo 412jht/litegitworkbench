@@ -40,6 +40,9 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 - Add a Git directory and switch back instantly without recreating its interface.
 - Preserve each open project's tabs, filters, selections, comparisons, console and commit draft during switching.
 - Remember the project list, sidebar state and most recently opened repository across restarts.
+- Show just the project name for the main worktree and `worktree-name / main-project` for linked worktrees.
+- Hover over project names or collapsed numbered shortcuts to see the complete name and absolute path.
+- Remove entries from Projects without deleting repositories, files, drafts or pending Git operations.
 - Display the current branch, HEAD, upstream, ahead/behind counts, working-tree state and worktree count.
 - Refresh repository data concurrently to keep large repositories responsive.
 
@@ -48,6 +51,7 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 - Display local and remote branches, HEAD, upstream tracking, divergence, author and latest commit.
 - Filter, check out, create, rename and delete local branches.
 - Refresh the branch list directly from the Branches tab without reopening the repository.
+- Use the branch row's context menu to update, check out, merge, rename or delete the selected branch.
 - Update a selected local branch from its configured upstream without checking it out or disturbing the current branch's staged, unstaged or untracked files.
 - Fast-forward where possible; merge diverged branches in a separate recovery worktree and publish the result only if the original branch has not moved.
 - Create a tracking branch from a remote branch.
@@ -59,6 +63,7 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 ### Commit history
 
 - Browse any reference or all references and inspect complete patches.
+- Right-click a commit to show details, copy its hash, edit an unpublished message, cherry-pick, revert or create a tag. Published message editing remains disabled.
 - Copy hashes, cherry-pick, revert and create tags.
 - Distinguish local-only commits from commits reachable through remote-tracking branches by both colour and text.
 - Double-click the commit-message column to edit a local-only commit.
@@ -69,6 +74,7 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 ### Local changes
 
 - View aligned before/after text, line numbers, red removed lines and green added lines.
+- List individual untracked files inside folders and show directory summaries instead of trying to open directories as files.
 - Compare all changes (HEAD to working tree), staged changes (HEAD to index) or unstaged changes (index to working tree), including files with both staged and unstaged edits.
 - Stage or unstage selected files, stage or unstage everything, and discard selected changes with confirmation.
 - Commit staged changes or amend the current commit.
@@ -120,6 +126,12 @@ Conflicting background updates appear in **Resolve conflicts...**, with their br
 The editor's left and right versions are index stages 2 and 3. During a merge these normally mean the current and incoming sides; during a rebase they mean the upstream and replayed commit. Modify/delete conflicts allow choosing the deleted side explicitly. Unresolved marker lines prevent saving. Binary, non-UTF-8, symbolic-link and submodule conflicts require external resolution; their original content is preserved. Inline previews and conflict editors are limited to 2 MiB and 20,000 lines per version to keep the interface responsive.
 
 Use **+ Add Git directory...** in the left sidebar to add another project. Clicking a project restores its existing interface immediately. Collapsing the sidebar leaves numbered project shortcuts. Open-project drafts and interface state remain in memory for the lifetime of the window; the project paths and last active project are saved between launches. Switching projects does not check out branches, modify files or close other project sessions.
+
+Projects use the main worktree name alone, for example `project`, and linked worktrees use `project-task / project`. Hovering reveals the full name and path in both sidebar modes. Use **Remove from Projects** or the project row's context menu to remove an entry. The Git directory and pending operations remain available; adding the directory again restores its in-memory session while the window is open.
+
+The project list is cached in `.litegit-projects.json` in the current running directory. The one-click launchers first change into their application directory, so source and portable launches keep the cache beside the application. Existing user settings are imported when no valid local cache exists. An empty local project list is respected after removals, and the cache is written atomically. Runtime project caches are excluded from Git.
+
+The Branches toolbar groups branch management, integration and tracking actions across the page. Local changes keeps its file actions on the left and the Compare controls at the top of the right pane. Branch, project and commit context menus also support Shift+F10 on a selected row; macOS supports Control-click.
 
 ## Scope
 

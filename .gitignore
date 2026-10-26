@@ -6,3 +6,5 @@ build/
 release/
 .build-venv/
 .litegit-local-policy.json
+.litegit-projects.json
+.litegit-projects.json.*.tmp

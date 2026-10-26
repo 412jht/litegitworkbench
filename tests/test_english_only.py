@@ -17,6 +17,8 @@ class EnglishOnlyRepositoryTests(unittest.TestCase):
         failures: list[str] = []
         for path in PROJECT_ROOT.rglob("*"):
             relative = path.relative_to(PROJECT_ROOT)
+            if path.name == ".litegit-projects.json" or path.name.startswith(".litegit-projects.json."):
+                continue
             if not path.is_file() or any(part in IGNORED_DIRECTORIES for part in relative.parts):
                 continue
             if path.suffix.casefold() not in TEXT_SUFFIXES:

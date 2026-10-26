@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from litegit_core import GitError, StatusEntry, run_git
+from litegit_core import GitError, StatusEntry, parse_status_porcelain, run_git
 from litegit_merge import MAX_EDITOR_LINES, _blob, _decode, _safe_file
 
 
@@ -17,6 +17,13 @@ class FileVersions:
     after: str
     before_label: str
     after_label: str
+
+
+@dataclass(frozen=True)
+class DirectoryPreview:
+    path: str
+    changes: tuple[StatusEntry, ...]
+    nested_repository: bool
 
 
 @dataclass(frozen=True)
@@ -71,14 +78,23 @@ def _revision_text(repository: Path, path: str, *, staged: bool) -> str:
     return _decode(_blob(repository, object_id))
 
 
-def read_file_versions(repository: Path, entry: StatusEntry, scope: str = "All changes") -> FileVersions:
+def read_file_versions(repository: Path, entry: StatusEntry, scope: str = "All changes") -> FileVersions | DirectoryPreview:
+    target = _safe_file(repository, entry.path)
+    if target.is_dir():
+        output = run_git(repository, ["--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", entry.path]).output
+        changes = tuple(
+            change for change in parse_status_porcelain(output)
+            if change.path.rstrip("/") != entry.path.rstrip("/")
+            and (scope != "Staged" or change.index not in {" ", "?", "!"})
+            and (scope != "Unstaged" or change.worktree not in {" ", "!"})
+        )
+        return DirectoryPreview(entry.path, changes, (target / ".git").exists())
     original = entry.original_path or entry.path
     before_path = original if scope != "Unstaged" or entry.worktree in {"R", "C"} else entry.path
     before = _revision_text(repository, before_path, staged=scope == "Unstaged")
     if scope == "Staged":
         after = _revision_text(repository, entry.path, staged=True)
     else:
-        target = _safe_file(repository, entry.path)
         if target.exists() and target.stat().st_size > MAX_PREVIEW_BYTES:
             raise ValueError("This file is too large for the inline preview (2 MiB per version).")
         after = _decode(target.read_bytes()) if target.exists() else ""

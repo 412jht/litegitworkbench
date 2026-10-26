@@ -6,9 +6,102 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Callable
 
-from litegit_diff import FileVersions, aligned_diff
+from litegit_diff import DirectoryPreview, FileVersions, aligned_diff
 from litegit_core import run_git
 from litegit_merge import ConflictFile, PendingUpdate, abort_update, conflict_regions, finish_update, pending_updates, read_conflict, save_resolution, unresolved_paths
+
+
+class HoverTip:
+    def __init__(self, widget: tk.Misc, describe: Callable[[tk.Event], str | None], *, delay: int = 450) -> None:
+        self.widget = widget
+        self.describe = describe
+        self.delay = delay
+        self.window: tk.Toplevel | None = None
+        self.label: ttk.Label | None = None
+        self.pending: str | None = None
+        self.content = ""
+        self.position = (0, 0)
+        widget.bind("<Motion>", self._motion, add="+")
+        for event in ("<Leave>", "<ButtonPress>", "<MouseWheel>", "<Button-4>", "<Button-5>", "<Configure>", "<Unmap>", "<Destroy>"):
+            widget.bind(event, self.hide, add="+")
+
+    def _motion(self, event: tk.Event) -> None:
+        content = self.describe(event) or ""
+        if content == self.content:
+            return
+        self.hide()
+        self.content = content
+        self.position = (event.x_root + 14, event.y_root + 18)
+        if content:
+            self.pending = self.widget.after(self.delay, self._show)
+
+    def _show(self) -> None:
+        self.pending = None
+        if not self.content or not self.widget.winfo_exists():
+            return
+        window = tk.Toplevel(self.widget)
+        self.window = window
+        window.wm_overrideredirect(True)
+        self.label = ttk.Label(window, text=self.content, padding=8, relief=tk.SOLID, borderwidth=1, wraplength=680)
+        self.label.pack()
+        window.update_idletasks()
+        if self.window is not window or not window.winfo_exists():
+            return
+        x, y = self.position
+        x = max(0, min(x, self.widget.winfo_screenwidth() - window.winfo_reqwidth() - 6))
+        y = max(0, min(y, self.widget.winfo_screenheight() - window.winfo_reqheight() - 6))
+        window.wm_geometry(f"+{x}+{y}")
+
+    def hide(self, _event: tk.Event | None = None) -> None:
+        if self.pending is not None:
+            self.widget.after_cancel(self.pending)
+            self.pending = None
+        if self.window is not None:
+            self.window.destroy()
+            self.window = None
+        self.label = None
+        self.content = ""
+
+
+def bind_context_menu(tree: ttk.Treeview, callback: Callable[[tk.Event], str]) -> None:
+    for event in ("<Button-3>", "<Shift-F10>", "<Menu>"):
+        tree.bind(event, callback)
+    if tree.tk.call("tk", "windowingsystem") == "aqua":
+        tree.bind("<Button-2>", callback)
+        tree.bind("<Control-Button-1>", callback)
+
+
+def context_row(tree: ttk.Treeview, event: tk.Event) -> str:
+    if getattr(event, "keysym", "") in {"Menu", "F10"}:
+        selection = tree.selection()
+        row = selection[0] if selection else tree.focus()
+    else:
+        row = tree.identify_row(event.y)
+    if row and tree.exists(row):
+        tree.selection_set(row)
+        tree.focus(row)
+        tree.focus_set()
+        return row
+    return ""
+
+
+def popup_menu(tree: ttk.Treeview, menu: tk.Menu, event: tk.Event, row: str) -> None:
+    if getattr(event, "keysym", "") in {"Menu", "F10"}:
+        bounds = tree.bbox(row)
+        if not bounds:
+            tree.see(row)
+            tree.update_idletasks()
+            bounds = tree.bbox(row)
+        if not bounds:
+            return
+        x, y, _width, height = bounds
+        position = (tree.winfo_rootx() + x + 24, tree.winfo_rooty() + y + height)
+    else:
+        position = (event.x_root, event.y_root)
+    try:
+        menu.tk_popup(*position)
+    finally:
+        menu.grab_release()
 
 
 def text_panel(parent: tk.Misc, *, editable: bool = False) -> tk.Text:
@@ -85,6 +178,23 @@ class DiffPreview(ttk.Frame):
         for text in (self.before_text, self.after_text):
             text.configure(state=tk.DISABLED)
             text.yview_moveto(0)
+
+    def render_directory(self, preview: DirectoryPreview) -> None:
+        self.message(preview.path + "   |   Directory")
+        self.before_frame.configure(text="Directory")
+        self.after_frame.configure(text="Changed files")
+        guidance = (
+            "This directory is a Git repository or submodule.\nAdd it to Projects to inspect its files."
+            if preview.nested_repository else
+            "Select an individual file to compare its contents.\nRefresh Local changes to list untracked files inside folders."
+        )
+        listing = "\n".join(f"{entry.index}{entry.worktree}  {entry.path}" for entry in preview.changes[:200])
+        if len(preview.changes) > 200:
+            listing += f"\n\nShowing 200 of {len(preview.changes)} changed files."
+        for text, content in ((self.before_text, guidance), (self.after_text, listing or "No individual changed files are listed in the parent repository.")):
+            text.configure(state=tk.NORMAL)
+            text.insert("1.0", content)
+            text.configure(state=tk.DISABLED)
 
 
 class ConflictEditor(tk.Toplevel):

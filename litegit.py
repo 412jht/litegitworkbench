@@ -5,6 +5,7 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -41,9 +42,9 @@ from litegit_core import (
     stash_format,
 )
 from litegit_reword import main as reword_helper_main
-from litegit_diff import FileVersions, read_file_versions
+from litegit_diff import DirectoryPreview, FileVersions, read_file_versions
 from litegit_merge import BranchUpdateResult, unresolved_paths, update_branch
-from litegit_views import ConflictEditor, ConflictManager, DiffPreview
+from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip, bind_context_menu, context_row, popup_menu
 
 
 APP_NAME = "LiteGit Workbench"
@@ -60,6 +61,8 @@ def application_config_dir() -> Path:
 
 CONFIG_DIR = application_config_dir()
 CONFIG_FILE = CONFIG_DIR / "settings.json"
+PROJECT_CACHE_FILE = Path.cwd() / ".litegit-projects.json"
+PROJECT_CACHE_FIELDS = ("projects", "last_repository", "sidebar_collapsed", "project_main_paths")
 
 
 def _editor_argument(value: str | os.PathLike[str]) -> str:
@@ -84,20 +87,53 @@ def build_reword_environment(target: str, message: str) -> dict[str, str]:
     }
 
 
-def load_settings() -> dict[str, object]:
+def _read_settings_json(path: Path) -> dict[str, object]:
     try:
-        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
 
 
-def save_settings(settings: dict[str, object]) -> None:
+def load_settings() -> dict[str, object]:
+    settings = _read_settings_json(CONFIG_FILE)
+    cache = _read_settings_json(PROJECT_CACHE_FILE)
+    if isinstance(cache.get("projects"), list):
+        for field in PROJECT_CACHE_FIELDS:
+            settings.pop(field, None)
+        settings.update({field: cache[field] for field in PROJECT_CACHE_FIELDS if field in cache})
+    return settings
+
+
+def _write_settings_json(path: Path, settings: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(settings, stream, ensure_ascii=False, indent=2)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def save_settings(settings: dict[str, object]) -> None:
+    cache = {field: settings[field] for field in PROJECT_CACHE_FIELDS if field in settings}
+    cache.setdefault("projects", [])
+    cache["version"] = 1
+    _write_settings_json(PROJECT_CACHE_FILE, cache)
+    try:
+        _write_settings_json(CONFIG_FILE, settings)
     except OSError:
         pass
+
+
+def main_worktree_path(repository: Path) -> Path:
+    worktrees = parse_worktree_porcelain(run_git(repository, ["worktree", "list", "--porcelain"]).output)
+    if not worktrees:
+        raise ValueError("Git did not return a main worktree for this repository.")
+    return Path(worktrees[0].path).resolve()
 
 
 class CommitMessageDialog(tk.Toplevel):
@@ -271,34 +307,35 @@ class RepositoryView(ttk.Frame):
         self.notebook.add(tab, text="Branches")
         toolbar = ttk.Frame(tab)
         toolbar.pack(fill=tk.X, pady=(0, 5))
-        for text, command in (
+        self.branch_toolbar = toolbar
+        for column, (text, command) in enumerate((
             ("Refresh branches", self.refresh_all),
             ("Update selected", self.update_selected_branch),
             ("Resolve conflicts...", self.open_conflicts),
-        ):
-            ttk.Button(toolbar, text=text, command=command).pack(side=tk.LEFT, padx=2)
+        )):
+            ttk.Button(toolbar, text=text, command=command).grid(row=0, column=column, padx=2, sticky="w")
+        toolbar.columnconfigure(3, weight=1)
+        self.branch_filter_var = tk.StringVar()
+        ttk.Label(toolbar, text="Filter:").grid(row=0, column=4, padx=(12, 2), sticky="e")
+        branch_filter = ttk.Entry(toolbar, textvariable=self.branch_filter_var, width=25)
+        branch_filter.grid(row=0, column=5, sticky="e")
+        branch_filter.bind("<KeyRelease>", lambda _event: self.render_branches())
         actions = ttk.Frame(tab)
         actions.pack(fill=tk.X, pady=(0, 5))
-        for index, (text, command) in enumerate((
-            ("Check out", self.checkout_branch),
-            ("New", self.create_branch),
-            ("Rename", self.rename_branch),
-            ("Delete", self.delete_branch),
-            ("Merge selected...", self.merge_selected_branch),
-            ("Abort merge", self.abort_merge),
-            ("Rebase current branch", self.rebase_selected_branch),
-            ("Set upstream", self.set_upstream),
-            ("Delete remote branch", self.delete_remote_branch),
+        self.branch_groups: dict[str, ttk.LabelFrame] = {}
+        for column, (caption, buttons, columns) in enumerate((
+            ("Branches", (("Check out", self.checkout_branch), ("New", self.create_branch), ("Rename", self.rename_branch), ("Delete", self.delete_branch)), 2),
+            ("Integration", (("Merge selected...", self.merge_selected_branch), ("Rebase current...", self.rebase_selected_branch), ("Abort merge", self.abort_merge)), 2),
+            ("Tracking", (("Set upstream", self.set_upstream), ("Delete remote branch", self.delete_remote_branch)), 1),
         )):
-            if index == 4:
-                actions = ttk.Frame(tab)
-                actions.pack(fill=tk.X, pady=(0, 5))
-            ttk.Button(actions, text=text, command=command).pack(side=tk.LEFT, padx=2)
-        self.branch_filter_var = tk.StringVar()
-        ttk.Label(toolbar, text="Filter:").pack(side=tk.LEFT, padx=(15, 2))
-        branch_filter = ttk.Entry(toolbar, textvariable=self.branch_filter_var, width=25)
-        branch_filter.pack(side=tk.LEFT)
-        branch_filter.bind("<KeyRelease>", lambda _event: self.render_branches())
+            actions.columnconfigure(column, weight=1, uniform="branch-actions")
+            group = ttk.LabelFrame(actions, text=caption, padding=4)
+            group.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 0))
+            self.branch_groups[caption] = group
+            for index, (text, command) in enumerate(buttons):
+                ttk.Button(group, text=text, command=command).grid(row=index // columns, column=index % columns, padx=2, pady=2, sticky="ew")
+            for index in range(columns):
+                group.columnconfigure(index, weight=1, uniform="buttons")
         self.branch_tree = self._tree(
             tab,
             (
@@ -317,6 +354,18 @@ class RepositoryView(ttk.Frame):
         )
         self.branch_tree.bind("<Double-1>", lambda _event: self.checkout_branch())
         self.branch_tree.bind("<<TreeviewSelect>>", lambda _event: self.show_branch_summary())
+        self.branch_menu = tk.Menu(self, tearoff=False)
+        for label, action in (
+            ("Update branch from upstream", "update_selected_branch"), ("Check out", "checkout_branch"),
+            ("Merge into current branch...", "merge_selected_branch"), ("Rebase current branch...", "rebase_selected_branch"),
+            ("Set upstream...", "set_upstream"), ("Rename...", "rename_branch"),
+            ("Delete local branch...", "delete_branch"), ("Delete remote branch...", "delete_remote_branch"),
+        ):
+            self.branch_menu.add_command(label=label, command=lambda method=action: getattr(self, method)())
+        self.branch_menu.add_separator()
+        self.branch_menu.add_command(label="Refresh branches", command=self.refresh_all)
+        self.branch_menu.add_command(label="Resolve conflicts...", command=self.open_conflicts)
+        bind_context_menu(self.branch_tree, self._on_branch_context_menu)
 
     def _build_history_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=6)
@@ -362,29 +411,44 @@ class RepositoryView(ttk.Frame):
         self.commit_tree.tag_configure("remote", background="#F2F4F7", foreground="#667085")
         self.commit_tree.bind("<<TreeviewSelect>>", self._on_commit_selection)
         self.commit_tree.bind("<Double-1>", self._on_commit_double_click)
+        self.commit_menu = tk.Menu(self, tearoff=False)
+        for label, action in (
+            ("Show commit", "show_commit"), ("Copy hash", "copy_commit_hash"),
+            ("Edit message...", "edit_commit_message"), ("Cherry-pick...", "cherry_pick"),
+            ("Revert...", "revert_commit"), ("Create tag...", "create_tag_at_commit"),
+        ):
+            self.commit_menu.add_command(label=label, command=lambda method=action: getattr(self, method)())
+        self.commit_menu.add_separator()
+        self.commit_menu.add_command(label="Refresh history", command=self.refresh_history)
+        bind_context_menu(self.commit_tree, self._on_commit_context_menu)
         self.commit_detail_text = self._text(lower, height=12)
 
     def _build_changes_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=6)
+        self.changes_tab = tab
         self.notebook.add(tab, text="Local changes")
-        toolbar = ttk.Frame(tab)
-        toolbar.pack(fill=tk.X, pady=(0, 5))
-        for text, command in (
-            ("Stage selected", self.stage_selected),
-            ("Unstage selected", self.unstage_selected),
-            ("Stage all", lambda: self.execute_git(["add", "-A"], refresh=True)),
-            ("Unstage all", lambda: self.execute_git(["reset", "--mixed"], refresh=True)),
-            ("Discard selected", self.discard_selected),
-            ("Resolve conflicts...", self.open_conflicts),
-            ("Refresh", self.refresh_all),
-        ):
-            ttk.Button(toolbar, text=text, command=command).pack(side=tk.LEFT, padx=2)
         pane = ttk.Panedwindow(tab, orient=tk.HORIZONTAL)
         pane.pack(fill=tk.BOTH, expand=True)
         left = ttk.Frame(pane)
         right = ttk.Frame(pane)
         pane.add(left, weight=2)
         pane.add(right, weight=3)
+        toolbar = ttk.Frame(left)
+        toolbar.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(toolbar, text="Changed files").pack(side=tk.LEFT)
+        ttk.Button(toolbar, text="Refresh", command=self.refresh_all).pack(side=tk.RIGHT, padx=2)
+        actions = ttk.Frame(left)
+        actions.pack(fill=tk.X, pady=(0, 5))
+        for index, (text, command) in enumerate((
+            ("Stage selected", self.stage_selected),
+            ("Unstage selected", self.unstage_selected),
+            ("Stage all", lambda: self.execute_git(["add", "-A"], refresh=True)),
+            ("Unstage all", lambda: self.execute_git(["reset", "--mixed"], refresh=True)),
+            ("Discard selected", self.discard_selected),
+            ("Resolve conflicts...", self.open_conflicts),
+        )):
+            ttk.Button(actions, text=text, command=command).grid(row=index // 2, column=index % 2, padx=2, pady=2, sticky="ew")
+        actions.columnconfigure((0, 1), weight=1, uniform="change-actions")
         self.change_tree = self._tree(
             left,
             (("code", "State", 75), ("state", "Description", 160), ("path", "Path", 430)),
@@ -393,6 +457,7 @@ class RepositoryView(ttk.Frame):
         self.change_tree.bind("<<TreeviewSelect>>", lambda _event: self.show_selected_diff())
         self.change_tree.bind("<Double-1>", lambda _event: self.open_selected_conflict())
         diff_tools = ttk.Frame(right)
+        self.compare_toolbar = diff_tools
         diff_tools.pack(fill=tk.X)
         ttk.Label(diff_tools, text="Compare:").pack(side=tk.LEFT)
         self.diff_scope_var = tk.StringVar(value="All changes")
@@ -617,7 +682,7 @@ class RepositoryView(ttk.Frame):
         repository = self.repository
         commands: dict[str, tuple[list[str], bool]] = {
             "branches": (["for-each-ref", f"--format={branch_format()}", "refs/heads", "refs/remotes"], False),
-            "status": (["status", "--porcelain=v1", "-z", "--untracked-files=normal"], True),
+            "status": (["status", "--porcelain=v1", "-z", "--untracked-files=all"], True),
             "worktrees": (["worktree", "list", "--porcelain"], True),
             "stashes": (["stash", "list", f"--format={stash_format()}", "--date=iso"], True),
             "remotes": (["remote", "-v"], False),
@@ -669,6 +734,8 @@ class RepositoryView(ttk.Frame):
         self.branches = list(state["branches"])  # type: ignore[arg-type]
         self.status_entries = list(state["status"])  # type: ignore[arg-type]
         self.worktrees = list(state["worktrees"])  # type: ignore[arg-type]
+        if self.repository and self.worktrees:
+            self.app.remember_main_worktree(self.repository, Path(self.worktrees[0].path))
         self.stashes = list(state["stashes"])  # type: ignore[arg-type]
         self.remotes = list(state["remotes"])  # type: ignore[arg-type]
         self.summary_vars["branch"].set(str(state["branch"]))
@@ -801,6 +868,35 @@ class RepositoryView(ttk.Frame):
         self.commit_tree.focus(row)
         self.edit_commit_message()
 
+    def _on_branch_context_menu(self, event: tk.Event) -> str:
+        row = context_row(self.branch_tree, event)
+        if not row:
+            return "break"
+        branch = self.selected_branch()
+        if branch is None:
+            return "break"
+        local = branch.kind == "Local"
+        for label in ("Update branch from upstream", "Set upstream...", "Rename..."):
+            self.branch_menu.entryconfigure(label, state=tk.NORMAL if local else tk.DISABLED)
+        self.branch_menu.entryconfigure("Check out", state=tk.DISABLED if branch.current else tk.NORMAL)
+        self.branch_menu.entryconfigure("Delete local branch...", state=tk.NORMAL if local and not branch.current else tk.DISABLED)
+        self.branch_menu.entryconfigure("Delete remote branch...", state=tk.NORMAL if not local and not branch.name.endswith("/HEAD") else tk.DISABLED)
+        for label in ("Merge into current branch...", "Rebase current branch..."):
+            self.branch_menu.entryconfigure(label, state=tk.DISABLED if branch.current else tk.NORMAL)
+        popup_menu(self.branch_tree, self.branch_menu, event, row)
+        return "break"
+
+    def _on_commit_context_menu(self, event: tk.Event) -> str:
+        row = context_row(self.commit_tree, event)
+        if not row:
+            return "break"
+        commit = self.selected_commit(show_prompt=False)
+        if commit is not None:
+            editable = is_commit_message_editable(commit.full_hash, self.remote_commit_hashes)
+            self.commit_menu.entryconfigure("Edit message...", state=tk.NORMAL if editable else tk.DISABLED)
+            popup_menu(self.commit_tree, self.commit_menu, event, row)
+        return "break"
+
     def selected_branch(self, *, local_only: bool = False) -> BranchEntry | None:
         selected = self.branch_tree.selection()
         if not selected:
@@ -808,7 +904,7 @@ class RepositoryView(ttk.Frame):
             return None
         values = self.branch_tree.item(selected[0], "values")
         name = str(values[2])
-        branch = next((item for item in self.branches if item.name == name), None)
+        branch = next((item for item in self.branches if item.name == name and item.kind == str(values[1])), None)
         if branch and local_only and branch.kind != "Local":
             messagebox.showinfo(APP_NAME, "This operation requires a local branch.", parent=self)
             return None
@@ -1087,16 +1183,18 @@ class RepositoryView(ttk.Frame):
         repository, scope = self.repository, self.diff_scope_var.get()
         self.diff_preview.message("Loading " + entry.path + "...")
 
-        def collect() -> tuple[FileVersions | None, str]:
+        def collect() -> tuple[FileVersions | DirectoryPreview | None, str]:
             try:
                 return read_file_versions(repository, entry, scope), ""
-            except ValueError as exc:
+            except (ValueError, OSError) as exc:
                 return None, str(exc)
 
-        def render(result: tuple[FileVersions | None, str]) -> None:
+        def render(result: tuple[FileVersions | DirectoryPreview | None, str]) -> None:
             versions, error = result
             if error:
                 self.diff_preview.message(error)
+            elif isinstance(versions, DirectoryPreview):
+                self.diff_preview.render_directory(versions)
             elif versions is not None:
                 self.diff_preview.render(versions, entry.path)
 
@@ -1652,20 +1750,36 @@ class LiteGitApp(tk.Tk):
         self.option_add("*tearOff", False)
         self.settings = load_settings()
         self.views: dict[str, RepositoryView] = {}
+        self._all_views: set[RepositoryView] = set()
         saved = self.settings.get("projects", [])
-        self.project_paths = list(dict.fromkeys(path for path in saved if isinstance(path, str))) if isinstance(saved, list) else []
+        self.project_paths: list[str] = []
+        if isinstance(saved, list):
+            for path in saved:
+                if isinstance(path, str) and path.strip() and not any(self._project_key(Path(path)) == self._project_key(Path(existing)) for existing in self.project_paths):
+                    self.project_paths.append(str(Path(path).resolve()))
+        main_paths = self.settings.get("project_main_paths", {})
+        self.project_main_paths = {
+            self._project_key(Path(path)): Path(main).resolve()
+            for path, main in main_paths.items() if isinstance(path, str) and isinstance(main, str) and path and main
+        } if isinstance(main_paths, dict) else {}
         self.sidebar_collapsed = bool(self.settings.get("sidebar_collapsed", False))
         self._open_request = 0
         self._closing = False
+        self._suppress_project_selection = False
+        self._project_menu_path: str | None = None
         self._build_project_sidebar()
         self.content = ttk.Frame(self)
         self.content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.active_view = RepositoryView(self)
+        self.active_view = self._new_view()
+        self._empty_view = self.active_view
         self.active_view.pack(fill=tk.BOTH, expand=True)
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<F5>", lambda _event: self.active_view.refresh_all())
         self.bind("<Control-o>", lambda _event: self.active_view.choose_repository())
         self._render_projects()
+        if self.project_paths:
+            self._save_project_state()
+            self._refresh_project_labels()
         last = self.settings.get("last_repository", "")
         if isinstance(last, str) and last and Path(last).is_dir():
             self.after(100, lambda: self.open_repository(last))
@@ -1682,10 +1796,17 @@ class LiteGitApp(tk.Tk):
         self.collapse_button.pack(side=tk.RIGHT)
         self.add_project_button = ttk.Button(self.sidebar, command=lambda: self.active_view.choose_repository())
         self.add_project_button.pack(fill=tk.X, pady=8)
+        self.remove_project_button = ttk.Button(self.sidebar, command=self.remove_project)
+        self.remove_project_button.pack(fill=tk.X, pady=(0, 8))
         self.project_tree = ttk.Treeview(self.sidebar, show="tree", selectmode="browse")
         self.project_tree.column("#0", width=200, minwidth=24)
         self.project_tree.pack(fill=tk.BOTH, expand=True)
         self.project_tree.bind("<<TreeviewSelect>>", self._select_project)
+        self.project_tooltip = HoverTip(self.project_tree, self._project_tooltip_text)
+        self.project_menu = tk.Menu(self, tearoff=False)
+        self.project_menu.add_command(label="Open project", command=lambda: self.open_repository(self._project_menu_path) if self._project_menu_path else None)
+        self.project_menu.add_command(label="Remove from Projects", command=lambda: self.remove_project(self._project_menu_path))
+        bind_context_menu(self.project_tree, self._on_project_context_menu)
         self.project_hint = ttk.Label(self.sidebar, text="Open projects keep their tabs,\nfilters and commit drafts.", wraplength=225)
         self.project_hint.pack(fill=tk.X, pady=8)
 
@@ -1693,16 +1814,116 @@ class LiteGitApp(tk.Tk):
     def _project_key(repository: Path) -> str:
         return os.path.normcase(str(repository.resolve()))
 
+    def _new_view(self) -> RepositoryView:
+        view = RepositoryView(self)
+        self._all_views.add(view)
+        return view
+
+    def _save_project_state(self) -> None:
+        self.settings["projects"] = list(self.project_paths)
+        self.settings["sidebar_collapsed"] = self.sidebar_collapsed
+        self.settings["project_main_paths"] = {
+            self._project_key(Path(path)): str(self.project_main_paths[self._project_key(Path(path))])
+            for path in self.project_paths if self._project_key(Path(path)) in self.project_main_paths
+        }
+        try:
+            save_settings(self.settings)
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"The project list remains available in this window, but its cache could not be saved:\n{PROJECT_CACHE_FILE}\n\n{exc}", parent=self)
+
+    def remember_main_worktree(self, repository: Path, main: Path) -> None:
+        key = self._project_key(repository)
+        main = main.resolve()
+        if self.project_main_paths.get(key) != main:
+            self.project_main_paths[key] = main
+            self._save_project_state()
+            self._render_projects()
+
+    def _refresh_project_labels(self) -> None:
+        missing = [Path(path) for path in self.project_paths if self._project_key(Path(path)) not in self.project_main_paths]
+        if not missing:
+            return
+
+        def collect() -> dict[str, Path]:
+            result = {}
+            for repository in missing:
+                try:
+                    result[self._project_key(repository)] = main_worktree_path(repository)
+                except (GitError, ValueError, OSError):
+                    continue
+            return result
+
+        def rendered(names: dict[str, Path]) -> None:
+            self.project_main_paths.update(names)
+            self._save_project_state()
+            self._render_projects()
+
+        self.active_view._submit("Reading project worktree names...", collect, rendered, channel="project-labels")
+
+    def _project_name(self, path: str) -> str:
+        repository = Path(path)
+        name = repository.name or str(repository)
+        main = self.project_main_paths.get(self._project_key(repository))
+        if main is not None and self._project_key(main) != self._project_key(repository):
+            return name + " / " + (main.name or str(main))
+        return name
+
+    def _project_tooltip_text(self, event: tk.Event) -> str | None:
+        row = self.project_tree.identify_row(event.y)
+        if row and row.isdigit() and int(row) < len(self.project_paths):
+            path = self.project_paths[int(row)]
+            return self._project_name(path) + "\n" + str(Path(path).resolve())
+        return None
+
+    def _on_project_context_menu(self, event: tk.Event) -> str:
+        self._suppress_project_selection = True
+        self.after_idle(lambda: setattr(self, "_suppress_project_selection", False))
+        row = context_row(self.project_tree, event)
+        if row:
+            self.project_tooltip.hide()
+            self._project_menu_path = self.project_paths[int(row)]
+            popup_menu(self.project_tree, self.project_menu, event, row)
+        return "break"
+
+    def remove_project(self, path: str | None = None) -> None:
+        selection = self.project_tree.selection()
+        if path is None and selection:
+            path = self.project_paths[int(selection[0])]
+        if path is None:
+            return
+        key = self._project_key(Path(path))
+        if not any(self._project_key(Path(existing)) == key for existing in self.project_paths):
+            return
+        self._open_request += 1
+        self.project_paths = [existing for existing in self.project_paths if self._project_key(Path(existing)) != key]
+        if self.active_view.repository and self._project_key(self.active_view.repository) == key:
+            self.active_view.pack_forget()
+            remaining = next((self.views[self._project_key(Path(existing))] for existing in self.project_paths if self._project_key(Path(existing)) in self.views), None)
+            if remaining is not None:
+                self._activate_repository(remaining.repository)
+            else:
+                if self._empty_view.repository is not None:
+                    self._empty_view = self._new_view()
+                self.active_view = self._empty_view
+                self.active_view.pack(fill=tk.BOTH, expand=True)
+                self.settings["last_repository"] = ""
+                self.title(f"{APP_NAME} {VERSION}")
+                if self.project_paths:
+                    self.open_repository(self.project_paths[0])
+        self._save_project_state()
+        self._render_projects()
+
     def toggle_sidebar(self) -> None:
         self.sidebar_collapsed = not self.sidebar_collapsed
-        self.settings["sidebar_collapsed"] = self.sidebar_collapsed
-        save_settings(self.settings)
+        self._save_project_state()
         self._render_projects()
 
     def _render_projects(self) -> None:
+        self.project_tooltip.hide()
         self.sidebar.configure(width=56 if self.sidebar_collapsed else 240)
         self.collapse_button.configure(text=">" if self.sidebar_collapsed else "<")
         self.add_project_button.configure(text="+" if self.sidebar_collapsed else "+ Add Git directory...")
+        self.remove_project_button.configure(text="-" if self.sidebar_collapsed else "Remove from Projects", state=tk.NORMAL if self.project_paths else tk.DISABLED)
         if self.sidebar_collapsed:
             self.project_label.pack_forget()
             self.project_hint.pack_forget()
@@ -1713,13 +1934,15 @@ class LiteGitApp(tk.Tk):
         active = self._project_key(self.active_view.repository) if self.active_view.repository else ""
         for index, path in enumerate(self.project_paths):
             repository = Path(path)
-            label = f"{index + 1:02d}" if self.sidebar_collapsed else repository.name + " / " + repository.parent.name
+            label = f"{index + 1:02d}" if self.sidebar_collapsed else self._project_name(path)
             self.project_tree.insert("", tk.END, iid=str(index), text=label)
             if self._project_key(repository) == active:
                 self.project_tree.selection_set(str(index))
                 self.project_tree.see(str(index))
 
     def _select_project(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        if self._suppress_project_selection:
+            return
         selection = self.project_tree.selection()
         if selection:
             path = self.project_paths[int(selection[0])]
@@ -1748,7 +1971,7 @@ class LiteGitApp(tk.Tk):
         view = self.views.get(key)
         new = view is None
         if view is None:
-            view = self.active_view if self.active_view.repository is None else RepositoryView(self)
+            view = self.active_view if self.active_view.repository is None else self._new_view()
             self.views[key] = view
         self.active_view.pack_forget()
         self.active_view = view
@@ -1757,16 +1980,15 @@ class LiteGitApp(tk.Tk):
             view._repository_opened(repository)
         if not any(self._project_key(Path(path)) == key for path in self.project_paths):
             self.project_paths.append(str(repository))
-        self.settings["projects"] = self.project_paths
         self.settings["last_repository"] = str(repository)
-        save_settings(self.settings)
+        self._save_project_state()
         self.title(f"{APP_NAME} {VERSION} - {repository.name}")
         self._render_projects()
 
     def _close(self) -> None:
         if self._closing:
             return
-        views = set(self.views.values()) | {self.active_view}
+        views = self._all_views
         editors = [child for view in views for child in view.winfo_children() if isinstance(child, ConflictEditor)]
         if any(editor.saving for editor in editors) or any(view._busy_count for view in views):
             messagebox.showinfo(APP_NAME, "Wait for the running repository operations to finish before closing.", parent=self)

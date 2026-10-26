@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from litegit_core import GitError, StatusEntry, run_git
-from litegit_diff import aligned_diff, read_file_versions
+from litegit_diff import DirectoryPreview, aligned_diff, read_file_versions
 from litegit_merge import abort_update, conflict_regions, finish_update, has_conflict_markers, pending_updates, read_conflict, save_resolution, unresolved_paths, update_branch
 
 
@@ -259,6 +259,28 @@ class RepositoryTests(unittest.TestCase):
         (self.repository / "new.txt").write_text("new\n", encoding="utf-8", newline="\n")
         versions = read_file_versions(self.repository, StatusEntry("?", "?", "new.txt"))
         self.assertEqual(("", "new\n"), (versions.before, versions.after))
+
+    def test_directory_previews_list_changed_files_without_reading_a_directory_as_bytes(self) -> None:
+        directory = self.repository / "folder"
+        directory.mkdir()
+        (directory / "file[1].txt").write_text("first\n", encoding="utf-8")
+        (directory / "second.txt").write_text("second\n", encoding="utf-8")
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("A directory must not be read as a file")):
+            preview = read_file_versions(self.repository, StatusEntry("?", "?", "folder/"))
+        self.assertIsInstance(preview, DirectoryPreview)
+        self.assertEqual({"folder/file[1].txt", "folder/second.txt"}, {entry.path for entry in preview.changes})
+        self.assertFalse(preview.nested_repository)
+        self.assertEqual((), read_file_versions(self.repository, StatusEntry("?", "?", "folder/"), "Staged").changes)
+
+    def test_repository_refresh_lists_individual_untracked_files_inside_folders(self) -> None:
+        from litegit import RepositoryView
+
+        folder = self.repository / "folder"
+        folder.mkdir()
+        (folder / "first.txt").write_text("first\n", encoding="utf-8")
+        (folder / "second.txt").write_text("second\n", encoding="utf-8")
+        state = RepositoryView._collect_repository_state(type("State", (), {"repository": self.repository})())
+        self.assertEqual({"folder/first.txt", "folder/second.txt"}, {entry.path for entry in state["status"]})
 
     def ui(self) -> object:
         import litegit
