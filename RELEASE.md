@@ -1,4 +1,4 @@
-# LiteGit Workbench 2.0.0 release guide
+# LiteGit Workbench 2.1.0 release guide
 
 ## Release targets
 
@@ -60,10 +60,10 @@ A manual workflow run keeps the packages as Actions artefacts. Pushing a `v*` ta
 ## Release verification checklist
 
 - The full test suite passes on every target.
-- The Windows ZipApp smoke test reports version `2.0.0` and `frozen: false`.
+- The Windows ZipApp smoke test reports version `2.1.0` and `frozen: false`.
 - The Windows archive contains `LiteGitWorkbench.pyz` and `run-portable.cmd`.
 - The Windows archive and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files.
-- Linux and macOS frozen smoke tests report version `2.0.0` and `frozen: true`.
+- Linux and macOS frozen smoke tests report version `2.1.0` and `frozen: true`.
 - Native structural verification reports the expected ELF or Mach-O header.
 - The repository text and Git commit messages contain ASCII-only British English.
 - No private-key marker, access token or personal absolute path appears in source or packaged bytes.

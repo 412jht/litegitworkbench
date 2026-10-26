@@ -36,7 +36,10 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 ### Repositories and status
 
 - Open an existing repository, initialise a directory or clone a remote repository.
-- Remember the most recently opened repository.
+- Keep several repositories in one window with a collapsible project sidebar.
+- Add a Git directory and switch back instantly without recreating its interface.
+- Preserve each open project's tabs, filters, selections, comparisons, console and commit draft during switching.
+- Remember the project list, sidebar state and most recently opened repository across restarts.
 - Display the current branch, HEAD, upstream, ahead/behind counts, working-tree state and worktree count.
 - Refresh repository data concurrently to keep large repositories responsive.
 
@@ -44,6 +47,9 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 
 - Display local and remote branches, HEAD, upstream tracking, divergence, author and latest commit.
 - Filter, check out, create, rename and delete local branches.
+- Refresh the branch list directly from the Branches tab without reopening the repository.
+- Update a selected local branch from its configured upstream without checking it out or disturbing the current branch's staged, unstaged or untracked files.
+- Fast-forward where possible; merge diverged branches in a separate recovery worktree and publish the result only if the original branch has not moved.
 - Create a tracking branch from a remote branch.
 - Merge the selected branch into the current branch with a clear confirmation prompt.
 - Abort a merge in progress.
@@ -62,7 +68,8 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 
 ### Local changes
 
-- View status and patches.
+- View aligned before/after text, line numbers, red removed lines and green added lines.
+- Compare all changes (HEAD to working tree), staged changes (HEAD to index) or unstaged changes (index to working tree), including files with both staged and unstaged edits.
 - Stage or unstage selected files, stage or unstage everything, and discard selected changes with confirmation.
 - Commit staged changes or amend the current commit.
 
@@ -76,7 +83,7 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 ### Remotes and authentication
 
 - Add, edit and delete remotes.
-- Fetch, fast-forward pull and push.
+- Fetch, merge-based pull and push. Pull conflicts open the conflict manager.
 - Set an upstream on the first push and use `--force-with-lease` when explicitly selected.
 - Test origin authentication before pushing.
 - Discover Git AskPass helpers for encrypted SSH keys and HTTPS credentials.
@@ -85,7 +92,11 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 ### Advanced operations
 
 - View file history, blame information, reflog and unresolved conflicts.
-- Resolve a conflict with ours or theirs and mark files as resolved.
+- Resolve text conflicts in three panes: read-only left and right versions alongside an editable result.
+- Navigate conflict blocks, choose either side or both, edit the result manually, and save and stage the resolution.
+- Continue a merge, rebase, cherry-pick or revert after resolving its conflicts.
+- Recover or abort a pending background branch update after restarting the application.
+- Resolve a conflict with ours or theirs and mark files as resolved through the advanced tools.
 - Export or apply patches.
 - Inspect and recursively initialise submodules.
 - Use the built-in Git console for other Git commands without invoking a command shell.
@@ -98,8 +109,18 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 py -3 -m unittest discover -s tests -v
 ```
 
-The tests cover parsers, repository integration, merge behaviour, worktrees, push behaviour, commit-message rewriting, history state and the English-only repository policy.
+The tests cover parsers, repository integration, isolated branch updates, dirty-work preservation, conflict recovery and editing, before/after previews, project switching, stale background responses, worktrees, push behaviour, commit-message rewriting, history state and the English-only repository policy.
+
+## Using the 2.1.0 workflows
+
+In **Branches**, select a local branch with an upstream and press **Update selected**. Branches checked out in another worktree must be updated from that worktree. The current branch uses a normal merge-based pull; Git will refuse to overwrite overlapping uncommitted changes. **Refresh branches** refreshes local Git information; use **Fetch** to refresh remote-tracking references from the server.
+
+Conflicting background updates appear in **Resolve conflicts...**, with their branch and separate worktree path. Open each file in the three-way editor, resolve every block, then press **Save and stage**. Press **Complete merge / update** to finish and publish the branch update. **Abort background update** cancels the isolated merge. The branch remains unchanged until publication; a concurrent branch movement prevents publication and preserves the recovery worktree.
+
+The editor's left and right versions are index stages 2 and 3. During a merge these normally mean the current and incoming sides; during a rebase they mean the upstream and replayed commit. Modify/delete conflicts allow choosing the deleted side explicitly. Unresolved marker lines prevent saving. Binary, non-UTF-8, symbolic-link and submodule conflicts require external resolution; their original content is preserved. Inline previews and conflict editors are limited to 2 MiB and 20,000 lines per version to keep the interface responsive.
+
+Use **+ Add Git directory...** in the left sidebar to add another project. Clicking a project restores its existing interface immediately. Collapsing the sidebar leaves numbered project shortcuts. Open-project drafts and interface state remain in memory for the lifetime of the window; the project paths and last active project are saved between launches. Switching projects does not check out branches, modify files or close other project sessions.
 
 ## Scope
 
-LiteGit Workbench covers day-to-day Git workflows and exposes the remaining Git command-line surface through its built-in console. IDE-specific editing features, graphical three-way merge editors and hosted code-review services are outside its scope.
+LiteGit Workbench covers day-to-day Git workflows, text comparison and three-way conflict resolution, and exposes the remaining Git command-line surface through its built-in console. A general-purpose code editor and hosted code-review services are outside its scope.

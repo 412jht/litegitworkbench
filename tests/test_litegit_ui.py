@@ -13,15 +13,16 @@ class CommitHistoryUiTests(unittest.TestCase):
     def setUp(self) -> None:
         try:
             with patch("litegit.load_settings", return_value={}):
-                self.app = litegit.LiteGitApp()
-            self.app.withdraw()
+                self.root = litegit.LiteGitApp()
+            self.root.withdraw()
+            self.app = self.root.active_view
         except tk.TclError as exc:
             self.skipTest(f"Tk is unavailable: {exc}")
 
     def tearDown(self) -> None:
-        app = getattr(self, "app", None)
-        if app is not None and app.winfo_exists():
-            app._close()
+        root = getattr(self, "root", None)
+        if root is not None and root.winfo_exists():
+            root._close()
 
     @staticmethod
     def _commits() -> list[CommitEntry]:

@@ -41,10 +41,13 @@ from litegit_core import (
     stash_format,
 )
 from litegit_reword import main as reword_helper_main
+from litegit_diff import FileVersions, read_file_versions
+from litegit_merge import BranchUpdateResult, unresolved_paths, update_branch
+from litegit_views import ConflictEditor, ConflictManager, DiffPreview
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 
 def application_config_dir() -> Path:
@@ -149,16 +152,13 @@ class CommitMessageDialog(tk.Toplevel):
         return dialog.result
 
 
-class LiteGitApp(tk.Tk):
-    def __init__(self) -> None:
-        super().__init__()
-        self.title(f"{APP_NAME} {VERSION}")
-        self.geometry("1320x850")
-        self.minsize(980, 650)
-        self.option_add("*tearOff", False)
+class RepositoryView(ttk.Frame):
+    def __init__(self, app: LiteGitApp) -> None:
+        super().__init__(app.content)
+        self.app = app
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="litegit")
         self.repository: Path | None = None
-        self.settings = load_settings()
+        self.settings = app.settings
         self.branches: list[BranchEntry] = []
         self.commits: list[CommitEntry] = []
         self.remote_commit_hashes: set[str] = set()
@@ -168,12 +168,11 @@ class LiteGitApp(tk.Tk):
         self.remotes: list[RemoteEntry] = []
         self._busy_count = 0
         self._closing = False
+        self._request_serials: dict[str, int] = {}
+        self._change_row_paths: dict[str, str] = {}
+        self._conflict_manager: ConflictManager | None = None
         self._build_style()
         self._build_ui()
-        self.protocol("WM_DELETE_WINDOW", self._close)
-        last_repository = str(self.settings.get("last_repository", ""))
-        if last_repository and Path(last_repository).exists():
-            self.after(100, lambda: self.open_repository(last_repository))
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
@@ -235,8 +234,6 @@ class LiteGitApp(tk.Tk):
         self.progress.pack(side=tk.RIGHT)
         self.status_var = tk.StringVar(value="Select a Git repository")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.bind("<F5>", lambda _event: self.refresh_all())
-        self.bind("<Control-o>", lambda _event: self.choose_repository())
 
     def _tree(self, parent: tk.Misc, columns: Sequence[tuple[str, str, int]], *, selectmode: str = "browse") -> ttk.Treeview:
         frame = ttk.Frame(parent)
@@ -275,6 +272,14 @@ class LiteGitApp(tk.Tk):
         toolbar = ttk.Frame(tab)
         toolbar.pack(fill=tk.X, pady=(0, 5))
         for text, command in (
+            ("Refresh branches", self.refresh_all),
+            ("Update selected", self.update_selected_branch),
+            ("Resolve conflicts...", self.open_conflicts),
+        ):
+            ttk.Button(toolbar, text=text, command=command).pack(side=tk.LEFT, padx=2)
+        actions = ttk.Frame(tab)
+        actions.pack(fill=tk.X, pady=(0, 5))
+        for index, (text, command) in enumerate((
             ("Check out", self.checkout_branch),
             ("New", self.create_branch),
             ("Rename", self.rename_branch),
@@ -284,8 +289,11 @@ class LiteGitApp(tk.Tk):
             ("Rebase current branch", self.rebase_selected_branch),
             ("Set upstream", self.set_upstream),
             ("Delete remote branch", self.delete_remote_branch),
-        ):
-            ttk.Button(toolbar, text=text, command=command).pack(side=tk.LEFT, padx=2)
+        )):
+            if index == 4:
+                actions = ttk.Frame(tab)
+                actions.pack(fill=tk.X, pady=(0, 5))
+            ttk.Button(actions, text=text, command=command).pack(side=tk.LEFT, padx=2)
         self.branch_filter_var = tk.StringVar()
         ttk.Label(toolbar, text="Filter:").pack(side=tk.LEFT, padx=(15, 2))
         branch_filter = ttk.Entry(toolbar, textvariable=self.branch_filter_var, width=25)
@@ -367,6 +375,7 @@ class LiteGitApp(tk.Tk):
             ("Stage all", lambda: self.execute_git(["add", "-A"], refresh=True)),
             ("Unstage all", lambda: self.execute_git(["reset", "--mixed"], refresh=True)),
             ("Discard selected", self.discard_selected),
+            ("Resolve conflicts...", self.open_conflicts),
             ("Refresh", self.refresh_all),
         ):
             ttk.Button(toolbar, text=text, command=command).pack(side=tk.LEFT, padx=2)
@@ -382,7 +391,15 @@ class LiteGitApp(tk.Tk):
             selectmode="extended",
         )
         self.change_tree.bind("<<TreeviewSelect>>", lambda _event: self.show_selected_diff())
-        self.diff_text = self._text(right)
+        self.change_tree.bind("<Double-1>", lambda _event: self.open_selected_conflict())
+        diff_tools = ttk.Frame(right)
+        diff_tools.pack(fill=tk.X)
+        ttk.Label(diff_tools, text="Compare:").pack(side=tk.LEFT)
+        self.diff_scope_var = tk.StringVar(value="All changes")
+        scope = ttk.Combobox(diff_tools, textvariable=self.diff_scope_var, values=("All changes", "Staged", "Unstaged"), state="readonly", width=16)
+        scope.pack(side=tk.LEFT, padx=4)
+        scope.bind("<<ComboboxSelected>>", lambda _event: self.show_selected_diff())
+        self.diff_preview = DiffPreview(right)
         commit_frame = ttk.LabelFrame(tab, text="Commit", padding=5)
         commit_frame.pack(fill=tk.X, pady=(6, 0))
         self.commit_message_var = tk.StringVar()
@@ -581,20 +598,13 @@ class LiteGitApp(tk.Tk):
         self._submit("Cloning repository...", lambda: run_git(parent, ["clone", "--", url, name], timeout=1800), finished)
 
     def open_repository(self, path: str) -> None:
-        if not path.strip():
-            return
-        self._submit(
-            "Recognising Git repository...",
-            lambda: discover_repository(path),
-            self._repository_opened,
-        )
+        self.app.open_repository(path)
 
     def _repository_opened(self, repository: Path) -> None:
+        if self.repository is not None and self.repository != repository:
+            raise ValueError("An open repository session cannot be reassigned to another project.")
         self.repository = repository
         self.path_var.set(str(repository))
-        self.settings["last_repository"] = str(repository)
-        save_settings(self.settings)
-        self.title(f"{APP_NAME} {VERSION} - {repository.name}")
         self.refresh_all()
 
     def require_repository(self) -> Path | None:
@@ -653,7 +663,7 @@ class LiteGitApp(tk.Tk):
     def refresh_all(self) -> None:
         if not self.require_repository():
             return
-        self._submit("Refreshing repository state...", self._collect_repository_state, self._render_repository_state)
+        self._submit("Refreshing repository state...", self._collect_repository_state, self._render_repository_state, channel="state")
 
     def _render_repository_state(self, state: dict[str, object]) -> None:
         self.branches = list(state["branches"])  # type: ignore[arg-type]
@@ -684,25 +694,35 @@ class LiteGitApp(tk.Tk):
         self.refresh_history()
 
     def render_branches(self) -> None:
+        selection = {tuple(self.branch_tree.item(item, "values")[1:3]) for item in self.branch_tree.selection()}
         self._clear_tree(self.branch_tree)
         needle = self.branch_filter_var.get().casefold().strip()
         for branch in self.branches:
             if needle and needle not in branch.name.casefold() and needle not in branch.subject.casefold():
                 continue
-            self.branch_tree.insert(
+            item = self.branch_tree.insert(
                 "",
                 tk.END,
                 values=("*" if branch.current else "", branch.kind, branch.name, branch.short_hash, branch.upstream, branch.tracking, branch.head_only, branch.branch_only, branch.date, branch.author, branch.subject),
             )
+            if (branch.kind, branch.name) in selection:
+                self.branch_tree.selection_set(item)
 
     def _render_changes(self) -> None:
+        selected_paths = {self._change_row_paths.get(item) for item in self.change_tree.selection()}
         self._clear_tree(self.change_tree)
+        self._change_row_paths = {}
         for index, entry in enumerate(self.status_entries):
             code = f"{entry.index}{entry.worktree}"
             display_path = f"{entry.original_path} -> {entry.path}" if entry.original_path else entry.path
             self.change_tree.insert("", tk.END, iid=str(index), values=(code, entry.state, display_path))
+            self._change_row_paths[str(index)] = entry.path
+            if entry.path in selected_paths:
+                self.change_tree.selection_add(str(index))
         if not self.status_entries:
-            self._set_text(self.diff_text, "The working tree is clean.")
+            self.diff_preview.message("The working tree is clean.")
+        elif not self.change_tree.selection():
+            self.diff_preview.message("Select a changed file to compare its versions.")
 
     def _render_worktrees(self) -> None:
         self._clear_tree(self.worktree_tree)
@@ -747,7 +767,7 @@ class LiteGitApp(tk.Tk):
             remote_hashes = find_remote_reachable_commits(repository, [commit.full_hash for commit in commits])
             return commits, remote_hashes
 
-        self._submit("Reading commit history...", collect, self._render_history)
+        self._submit("Reading commit history...", collect, self._render_history, channel="history")
 
     def _render_history(self, result: tuple[list[CommitEntry], set[str]]) -> None:
         commits, remote_hashes = result
@@ -892,6 +912,45 @@ class LiteGitApp(tk.Tk):
         if messagebox.askyesno(APP_NAME, "Abort the merge currently in progress?", icon="warning", parent=self):
             self.execute_git(["merge", "--abort"], refresh=True, confirm_destructive=False)
 
+    def update_selected_branch(self) -> None:
+        branch = self.selected_branch(local_only=True)
+        if not branch or not self.repository:
+            return
+        if branch.current:
+            self.pull()
+            return
+        if not messagebox.askyesno(APP_NAME, f"Fetch the upstream of {branch.name} and update that local branch?\n\nYour current branch and uncommitted files will be preserved. Diverged history will be merged in a separate worktree.", parent=self):
+            return
+        repository = self.repository
+
+        def finished(result: BranchUpdateResult) -> None:
+            self.refresh_all()
+            if result.pending:
+                self.open_conflicts(result.pending.worktree)
+            else:
+                messagebox.showinfo(APP_NAME, f"{result.branch}: {result.outcome}", parent=self)
+
+        def failed(_error: Exception) -> None:
+            self.open_conflicts()
+
+        self._submit(f"Updating {branch.name}...", lambda: update_branch(repository, branch.name), finished, on_error=failed)
+
+    def open_conflicts(self, target: str | None = None) -> None:
+        if not self.repository:
+            return
+        if self._conflict_manager and self._conflict_manager.winfo_exists():
+            self._conflict_manager.refresh(target)
+            self._conflict_manager.lift()
+        else:
+            self._conflict_manager = ConflictManager(self, self.repository, target)
+
+    def open_selected_conflict(self) -> None:
+        selected = self.change_tree.selection()
+        if selected and self.repository:
+            entry = self.status_entries[int(selected[0])]
+            if entry.index + entry.worktree in {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}:
+                self.open_conflicts()
+
     def rebase_selected_branch(self) -> None:
         branch = self.selected_branch()
         if branch and messagebox.askyesno(APP_NAME, f"Rebase the current branch onto {branch.name}?", parent=self):
@@ -1017,6 +1076,7 @@ class LiteGitApp(tk.Tk):
             self._prompt_create_tag(commit.full_hash)
 
     def show_selected_diff(self) -> None:
+        self._request_serials["diff"] = self._request_serials.get("diff", 0) + 1
         selected = self.change_tree.selection()
         if not selected or not self.repository:
             return
@@ -1024,22 +1084,25 @@ class LiteGitApp(tk.Tk):
             entry = self.status_entries[int(selected[0])]
         except (ValueError, IndexError):
             return
-        if entry.index == "?" and entry.worktree == "?":
-            path = self.repository / entry.path
+        repository, scope = self.repository, self.diff_scope_var.get()
+        self.diff_preview.message("Loading " + entry.path + "...")
+
+        def collect() -> tuple[FileVersions | None, str]:
             try:
-                output = path.read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                output = str(exc)
-            self._set_text(self.diff_text, f"Untracked file: {entry.path}\n\n{output}")
-            return
-        arguments = ["diff", "--find-renames"]
-        if entry.index != " ":
-            arguments.append("--cached")
-        arguments.extend(["--", entry.path])
+                return read_file_versions(repository, entry, scope), ""
+            except ValueError as exc:
+                return None, str(exc)
+
+        def render(result: tuple[FileVersions | None, str]) -> None:
+            versions, error = result
+            if error:
+                self.diff_preview.message(error)
+            elif versions is not None:
+                self.diff_preview.render(versions, entry.path)
+
         self._submit(
             "Reading differences...",
-            lambda: run_git(self.repository, arguments, check=False).output,
-            lambda output: self._set_text(self.diff_text, output or "There are no differences to display."),
+            collect, render, channel="diff",
         )
 
     def stage_selected(self) -> None:
@@ -1251,7 +1314,7 @@ class LiteGitApp(tk.Tk):
         return simpledialog.askstring(APP_NAME, "Remote name:", initialvalue=default, parent=self)
 
     def pull(self) -> None:
-        self.execute_git(["pull", "--ff-only"], refresh=True)
+        self.execute_git(["pull", "--no-rebase", "--no-edit"], refresh=True)
 
     def test_origin_authentication(self) -> None:
         if not any(remote.name == "origin" for remote in self.remotes):
@@ -1425,8 +1488,10 @@ class LiteGitApp(tk.Tk):
             if not messagebox.askyesno(APP_NAME, "The command may delete or overwrite data. Continue?", icon="warning", parent=self):
                 return
 
+        repository = self.repository
+
         def worker() -> list[GitResult]:
-            return [run_git(self.repository, command) for command in commands]
+            return [run_git(repository, command) for command in commands]
 
         def finished(results: list[GitResult]) -> None:
             for result in results:
@@ -1474,7 +1539,15 @@ class LiteGitApp(tk.Tk):
 
         self._submit(f"Running git {arguments[0]}...", worker, finished)
 
-    def _submit(self, label: str, worker: Callable[[], object], success: Callable[[object], None]) -> None:
+    def _submit(
+        self, label: str, worker: Callable[[], object], success: Callable[[object], None], *,
+        on_error: Callable[[Exception], None] | None = None, channel: str | None = None,
+    ) -> None:
+        if self._closing:
+            return
+        serial = self._request_serials.get(channel, 0) + 1 if channel else 0
+        if channel:
+            self._request_serials[channel] = serial
         self._busy_count += 1
         if self._busy_count == 1:
             self.progress.start(12)
@@ -1487,18 +1560,34 @@ class LiteGitApp(tk.Tk):
             self._busy_count = max(0, self._busy_count - 1)
             if self._busy_count == 0:
                 self.progress.stop()
+            if channel and self._request_serials.get(channel) != serial:
+                return
             try:
                 value = future.result()
+                success(value)
             except GitError as exc:
                 safe_error = redact_text(str(exc))
                 self.status_var.set(f"Failed: {safe_error}")
                 self._append_console_error(exc)
-                messagebox.showerror(APP_NAME, safe_error, parent=self)
+                if on_error:
+                    on_error(exc)
+                conflicts = False
+                if self.repository:
+                    try:
+                        conflicts = bool(unresolved_paths(self.repository))
+                    except GitError:
+                        pass
+                if conflicts:
+                    self.open_conflicts()
+                    self.refresh_all()
+                else:
+                    messagebox.showerror(APP_NAME, safe_error, parent=self)
             except Exception as exc:  # UI boundary: always report unexpected failures.
                 self.status_var.set(f"Failed: {exc}")
+                if on_error:
+                    on_error(exc)
                 messagebox.showerror(APP_NAME, f"{type(exc).__name__}: {exc}", parent=self)
             else:
-                success(value)
                 self.status_var.set("Completed")
 
         def poll() -> None:
@@ -1546,11 +1635,148 @@ class LiteGitApp(tk.Tk):
         values.sort(reverse=reverse)
         for index, (_value, item) in enumerate(values):
             tree.move(item, "", index)
-        tree.heading(column, command=lambda: LiteGitApp._sort_tree(tree, column, not reverse))
+        tree.heading(column, command=lambda: RepositoryView._sort_tree(tree, column, not reverse))
 
     def _close(self) -> None:
         self._closing = True
         self.executor.shutdown(wait=False, cancel_futures=True)
+        self.destroy()
+
+
+class LiteGitApp(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title(f"{APP_NAME} {VERSION}")
+        self.geometry("1500x900")
+        self.minsize(1100, 680)
+        self.option_add("*tearOff", False)
+        self.settings = load_settings()
+        self.views: dict[str, RepositoryView] = {}
+        saved = self.settings.get("projects", [])
+        self.project_paths = list(dict.fromkeys(path for path in saved if isinstance(path, str))) if isinstance(saved, list) else []
+        self.sidebar_collapsed = bool(self.settings.get("sidebar_collapsed", False))
+        self._open_request = 0
+        self._closing = False
+        self._build_project_sidebar()
+        self.content = ttk.Frame(self)
+        self.content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.active_view = RepositoryView(self)
+        self.active_view.pack(fill=tk.BOTH, expand=True)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.bind("<F5>", lambda _event: self.active_view.refresh_all())
+        self.bind("<Control-o>", lambda _event: self.active_view.choose_repository())
+        self._render_projects()
+        last = self.settings.get("last_repository", "")
+        if isinstance(last, str) and last and Path(last).is_dir():
+            self.after(100, lambda: self.open_repository(last))
+
+    def _build_project_sidebar(self) -> None:
+        self.sidebar = ttk.Frame(self, padding=(4, 8), width=240)
+        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        self.sidebar.pack_propagate(False)
+        header = ttk.Frame(self.sidebar)
+        header.pack(fill=tk.X)
+        self.project_label = ttk.Label(header, text="Projects")
+        self.project_label.pack(side=tk.LEFT)
+        self.collapse_button = ttk.Button(header, width=3, command=self.toggle_sidebar)
+        self.collapse_button.pack(side=tk.RIGHT)
+        self.add_project_button = ttk.Button(self.sidebar, command=lambda: self.active_view.choose_repository())
+        self.add_project_button.pack(fill=tk.X, pady=8)
+        self.project_tree = ttk.Treeview(self.sidebar, show="tree", selectmode="browse")
+        self.project_tree.column("#0", width=200, minwidth=24)
+        self.project_tree.pack(fill=tk.BOTH, expand=True)
+        self.project_tree.bind("<<TreeviewSelect>>", self._select_project)
+        self.project_hint = ttk.Label(self.sidebar, text="Open projects keep their tabs,\nfilters and commit drafts.", wraplength=225)
+        self.project_hint.pack(fill=tk.X, pady=8)
+
+    @staticmethod
+    def _project_key(repository: Path) -> str:
+        return os.path.normcase(str(repository.resolve()))
+
+    def toggle_sidebar(self) -> None:
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        self.settings["sidebar_collapsed"] = self.sidebar_collapsed
+        save_settings(self.settings)
+        self._render_projects()
+
+    def _render_projects(self) -> None:
+        self.sidebar.configure(width=56 if self.sidebar_collapsed else 240)
+        self.collapse_button.configure(text=">" if self.sidebar_collapsed else "<")
+        self.add_project_button.configure(text="+" if self.sidebar_collapsed else "+ Add Git directory...")
+        if self.sidebar_collapsed:
+            self.project_label.pack_forget()
+            self.project_hint.pack_forget()
+        else:
+            self.project_label.pack(side=tk.LEFT)
+            self.project_hint.pack(fill=tk.X, pady=8)
+        self.project_tree.delete(*self.project_tree.get_children())
+        active = self._project_key(self.active_view.repository) if self.active_view.repository else ""
+        for index, path in enumerate(self.project_paths):
+            repository = Path(path)
+            label = f"{index + 1:02d}" if self.sidebar_collapsed else repository.name + " / " + repository.parent.name
+            self.project_tree.insert("", tk.END, iid=str(index), text=label)
+            if self._project_key(repository) == active:
+                self.project_tree.selection_set(str(index))
+                self.project_tree.see(str(index))
+
+    def _select_project(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        selection = self.project_tree.selection()
+        if selection:
+            path = self.project_paths[int(selection[0])]
+            key = self._project_key(Path(path))
+            if not self.active_view.repository or self._project_key(self.active_view.repository) != key:
+                self.open_repository(path)
+
+    def open_repository(self, path: str) -> None:
+        if not path.strip():
+            return
+        key = self._project_key(Path(path))
+        self._open_request += 1
+        request = self._open_request
+        if key in self.views:
+            self._activate_repository(self.views[key].repository)
+            return
+
+        def opened(repository: Path) -> None:
+            if request == self._open_request:
+                self._activate_repository(repository)
+
+        self.active_view._submit("Recognising Git repository...", lambda: discover_repository(path), opened, channel="open-project")
+
+    def _activate_repository(self, repository: Path) -> None:
+        key = self._project_key(repository)
+        view = self.views.get(key)
+        new = view is None
+        if view is None:
+            view = self.active_view if self.active_view.repository is None else RepositoryView(self)
+            self.views[key] = view
+        self.active_view.pack_forget()
+        self.active_view = view
+        view.pack(fill=tk.BOTH, expand=True)
+        if new:
+            view._repository_opened(repository)
+        if not any(self._project_key(Path(path)) == key for path in self.project_paths):
+            self.project_paths.append(str(repository))
+        self.settings["projects"] = self.project_paths
+        self.settings["last_repository"] = str(repository)
+        save_settings(self.settings)
+        self.title(f"{APP_NAME} {VERSION} - {repository.name}")
+        self._render_projects()
+
+    def _close(self) -> None:
+        if self._closing:
+            return
+        views = set(self.views.values()) | {self.active_view}
+        editors = [child for view in views for child in view.winfo_children() if isinstance(child, ConflictEditor)]
+        if any(editor.saving for editor in editors) or any(view._busy_count for view in views):
+            messagebox.showinfo(APP_NAME, "Wait for the running repository operations to finish before closing.", parent=self)
+            return
+        if any(editor.has_unsaved_changes() for editor in editors):
+            if not messagebox.askyesno(APP_NAME, "Discard unsaved conflict editor results and close? Pending Git conflicts will be preserved for recovery.", icon="warning", parent=self):
+                return
+        self._closing = True
+        for view in views:
+            view._close()
         self.destroy()
 
 
