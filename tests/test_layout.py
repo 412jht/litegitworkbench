@@ -202,6 +202,53 @@ class LayoutTests(unittest.TestCase):
         # the child geometry is unchanged. Compare the resulting bounds.
         self.assertEqual(before, [(cell.winfo_x(), cell.winfo_y(), cell.winfo_width(), cell.winfo_height()) for cell in summary.cells])
 
+    def test_short_values_do_not_split_summary_captions(self) -> None:
+        captions = ("Branch", "HEAD", "Upstream", "Synchronisation", "Working tree", "Worktrees")
+        summary = ResponsiveSummary(self.root, [(caption, tk.StringVar(self.root, "1")) for caption in captions])
+        summary.pack(fill=tk.X)
+        width = min(900, self.maximum_width)
+        self.root.geometry(f"{width}x600")
+        self.settle(lambda: summary.winfo_width() == width and summary._layout_job is None)
+        reference = ttk.Label(self.root, wraplength=0)
+        for caption, (title, value) in zip(captions, summary.labels):
+            with self.subTest(caption=caption):
+                reference.configure(text=caption + ":")
+                self.assertEqual(reference.winfo_reqwidth(), title.winfo_reqwidth())
+                self.assertEqual(reference.winfo_reqheight(), title.winfo_reqheight())
+                self.assertEqual(title.winfo_y(), value.winfo_y())
+
+    def test_fitting_field_moves_as_a_group_and_unwraps_after_growing(self) -> None:
+        text = "feature/" + "example-" * 8
+        reference_title = ttk.Label(self.root, text="Branch:")
+        reference_value = ttk.Label(self.root, text=text, style="Summary.TLabel", wraplength=0)
+        natural = reference_title.winfo_reqwidth() + 5 + reference_value.winfo_reqwidth() + 12
+        wide = min(natural + 180, self.maximum_width)
+        self.assertLess(natural + 16, wide, "The test desktop must fit the complete field")
+        branch = tk.StringVar(self.root, text)
+        summary = ResponsiveSummary(self.root, [("Branch", branch), ("Worktrees", tk.StringVar(self.root, "1"))])
+        summary.pack(fill=tk.X)
+        for width in (300, wide, natural + 20, wide):
+            with self.subTest(width=width):
+                self.root.geometry(f"{width}x700")
+                self.settle(lambda: summary.winfo_width() == width and summary._layout_job is None)
+                title, value = summary.labels[0]
+                self.assertEqual(reference_title.winfo_reqheight(), title.winfo_reqheight())
+                if width >= natural + 16:
+                    self.assertEqual(reference_value.winfo_reqheight(), value.winfo_reqheight())
+                    self.assertEqual(reference_value.winfo_reqwidth(), value.winfo_reqwidth())
+                else:
+                    self.assertGreater(value.winfo_reqheight(), reference_value.winfo_reqheight())
+                if width == natural + 20:
+                    self.assertGreater(summary.cells[1].winfo_y(), summary.cells[0].winfo_y())
+                for cell in summary.cells:
+                    self.assertLessEqual(cell.winfo_x() + cell.winfo_width(), width)
+        self.root.geometry("300x700")
+        branch.set("main")
+        self.settle(lambda: summary.winfo_width() == 300 and summary._layout_job is None)
+        reference_value.configure(text="main")
+        self.assertEqual(reference_value.winfo_reqheight(), summary.labels[0][1].winfo_reqheight())
+        self.assertEqual(reference_value.winfo_reqwidth(), summary.labels[0][1].winfo_reqwidth())
+
 
 if __name__ == "__main__":
     unittest.main()

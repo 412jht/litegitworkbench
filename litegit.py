@@ -58,7 +58,7 @@ from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.6"
+VERSION = "2.1.7"
 
 
 def application_config_dir() -> Path:
@@ -2254,6 +2254,18 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
                 for label in labels:
                     if not label.winfo_ismapped() or label.winfo_x() + label.winfo_reqwidth() > cell.winfo_width() or label.winfo_y() + label.winfo_reqheight() > cell.winfo_height():
                         raise RuntimeError(f"A repository summary caption or value is clipped: {labels[0].cget('text')}, label extent {label.winfo_x() + label.winfo_reqwidth()}x{label.winfo_y() + label.winfo_reqheight()}, cell {cell.winfo_width()}x{cell.winfo_height()}")
+                title, value = labels
+                title_reference = ttk.Label(app, text=title.cget("text"), style=title.cget("style"), wraplength=0)
+                value_reference = ttk.Label(app, text=value.cget("text"), style=value.cget("style"), wraplength=0)
+                try:
+                    if (title.winfo_reqwidth(), title.winfo_reqheight()) != (title_reference.winfo_reqwidth(), title_reference.winfo_reqheight()):
+                        raise RuntimeError("A repository summary caption was split across lines")
+                    natural = title_reference.winfo_reqwidth() + 5 + value_reference.winfo_reqwidth() + 12
+                    if natural <= summary.winfo_width() - 16 and (value.winfo_reqwidth(), value.winfo_reqheight()) != (value_reference.winfo_reqwidth(), value_reference.winfo_reqheight()):
+                        raise RuntimeError("A repository summary value remained wrapped despite sufficient width")
+                finally:
+                    title_reference.destroy()
+                    value_reference.destroy()
             if sum(mode.sidebar.winfo_x() >= 0 for mode in app._sidebar_modes.values()) != 1:
                 raise RuntimeError("More than one sidebar layout is inside the window")
             layout_widths.append(expected)
@@ -2281,6 +2293,7 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
                 "status": "passed", "window_widths": layout_widths, "summary_fields_visible": len(summary.cells),
                 "divider_motions": 20, "resize_deferred_until_release": True, "pointer_grab_released": True,
                 "single_sidebar_visible": True,
+                "captions_single_line": True, "fitting_values_single_line": True,
             }
             result["status"] = "passed"
             finish()

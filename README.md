@@ -32,7 +32,7 @@ macOS or Linux:
 
 Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows portable package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
 
-Version 2.1.6 remains an unpublished test candidate. It retains the small MSVC EXE launcher and adjacent official CPython runtime used by 2.1.5, for which the affected user tentatively reported no new Kaspersky alert. It improves divider dragging, Projects expansion/collapse and repository summary layout. Candidate acceptance still requires checks on the affected machine.
+Version 2.1.7 remains an unpublished test candidate. It fixes summary captions splitting across lines and fitting values remaining wrapped after the window grows. It retains the small MSVC EXE launcher and adjacent official CPython runtime used by 2.1.5, for which the affected user tentatively reported no new Kaspersky alert, together with the divider and Projects improvements from 2.1.6. Candidate acceptance still requires checks on the affected machine.
 
 ## Features
 
@@ -51,7 +51,7 @@ Version 2.1.6 remains an unpublished test candidate. It retains the small MSVC E
 - Hover over project names or collapsed numbered shortcuts to see the complete name and absolute path.
 - Remove entries from Projects without deleting repositories, files, drafts or pending Git operations.
 - Display the current branch, HEAD, upstream, ahead/behind counts, working-tree state and worktree count.
-- Reflow summary fields into multiple rows and wrap long branch names when the available width is limited.
+- Move complete summary fields between rows as space changes. Keep captions on one line and wrap only values that exceed a whole row's available width; restore single-line values when they fit again.
 - Refresh repository data concurrently to keep large repositories responsive.
 
 ### Branches and merging

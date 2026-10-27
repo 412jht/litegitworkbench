@@ -1,5 +1,11 @@
 # Release notes
 
+## 2.1.7
+
+- Keep repository summary captions intact, including Worktrees with a short count. Remove the half-width caption constraint and fixed field-width cap introduced in 2.1.6.
+- Move complete caption/value pairs between retained rows as the viewport changes. Wrap a value only when its field exceeds a whole row, and restore a single line after growing the window or shortening the value.
+- Check single-line captions, narrow-to-wide recovery and fitting values through widget geometry and the actual Windows EXE. Keep the established launcher/runtime approach and retain this unpublished test candidate for user acceptance.
+
 ## 2.1.6
 
 - Preview internal divider positions whilst dragging, then resize content once on release. Cover History, Local changes, before/after comparisons and three-pane conflict editors; cancel safely on Escape, hiding or closing the pane.

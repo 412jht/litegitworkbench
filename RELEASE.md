@@ -1,8 +1,8 @@
-# LiteGit Workbench 2.1.6 release guide
+# LiteGit Workbench 2.1.7 release guide
 
 ## Current validation status
 
-Version 2.1.6 is an unpublished EXE test candidate. It improves internal divider dragging, Projects expansion/collapse and repository summary reflow. The Windows package retains the native MSVC launcher and adjacent official CPython runtime used by 2.1.5. Double-clicking the EXE starts the application without requiring a separate Python installation. Release acceptance requires the candidate's automated checks and validation on the affected machine.
+Version 2.1.7 is an unpublished EXE test candidate. It fixes summary captions and fitting values being split across lines in 2.1.6, whilst retaining the divider and Projects improvements. Complete fields flow into new rows when necessary; captions remain intact and values recover a single line when they fit the available width. The Windows package retains the native MSVC launcher and adjacent official CPython runtime used by 2.1.5. Double-clicking the EXE starts the application without requiring a separate Python installation. Release acceptance requires the candidate's automated checks and validation on the affected machine.
 
 On 27 October 2026, the affected user confirmed that expanding/collapsing Projects and manually selecting a project work with the 2.1.4 Python package, and clarified that script launches have never raised a Kaspersky alert. The native Nuitka 2.1.4 candidate became unresponsive during a sidebar check. Read-only inspection found suspended threads; the source remains unknown. The hang does not establish a new Kaspersky detection. The user subsequently reported that the 2.1.5 EXE appeared to run without a new alert, then requested the interface refinements in 2.1.6. This is an observation on that machine, not antivirus certification.
 
@@ -83,19 +83,19 @@ A manual workflow run keeps the packages as Actions artefacts. Pushing a `v*` ta
 ## Release verification checklist
 
 - The full test suite passes on every target.
-- The Windows ZipApp smoke test reports version `2.1.6` and `frozen: false`.
+- The Windows ZipApp smoke test reports version `2.1.7` and `frozen: false`.
 - The Windows portable archive contains `LiteGitWorkbench.pyz`, `run-portable.cmd` and its Python `start-without-restore.cmd` diagnostic launcher.
 - The extracted Windows portable launcher forwards paths containing spaces and returns the actual application exit status on success and failure.
 - The Windows portable archive and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files.
 - The Windows native ZIP contains `LiteGitWorkbench.exe`, `LiteGitWorkbench.pyz` and the official interpreter, standard library, Tkinter extension and Tcl/Tk data under `runtime`. No standalone EXE download is advertised. Its runtime reports `packager: CPython launcher` and its metadata identifies MSVC, runtime hashes and valid Python Software Foundation signatures.
-- Windows, Linux and macOS packaged smoke tests report version `2.1.6` and `frozen: true`. This field identifies a native packaged application; the standard interpreter retains its normal `sys.frozen` state.
+- Windows, Linux and macOS packaged smoke tests report version `2.1.7` and `frozen: true`. This field identifies a native packaged application; the standard interpreter retains its normal `sys.frozen` state.
 - Packaged repository smoke tests complete opening, two refresh cycles and commit-history loading. Windows checks report an empty inherited DLL search directory before and after the refresh.
 - Packaged sequence and message editor helpers produce the exact expected text; source filenames are not used to relaunch a compiled executable.
 - The Windows EXE passes 20 mapped sidebar toggles, 20 retained-project switches, draft preservation, Unicode argument forwarding and application failure exit propagation.
 - Startup diagnostics tolerate unavailable storage, record each phase once across workers and omit sensitive fields. Diagnostic startup retains saved project shortcuts without automatic Git work or cache writes.
 - Cached project switches preserve drafts and selections without filesystem reads, settings writes or sidebar reconstruction in the switch callback.
 - Only the active project view is mapped. One fixed sidebar layout is visible; the other remains positioned wholly outside the window's client area. Sidebar toggles retain both layouts without remapping their controls, rewriting project rows, resizing inactive project views or discarding drafts.
-- Internal divider drags keep content sizes unchanged until release, preserve child text, and release pointer capture and temporary bindings on cancellation or pane destruction. Narrow summaries retain all six captions and values inside their container, including long branch names.
+- Internal divider drags keep content sizes unchanged until release, preserve child text, and release pointer capture and temporary bindings on cancellation or pane destruction. Narrow summaries retain all six captions and values inside their container, including long branch names. Captions remain on one line, and a value that fits a complete row returns to its full single-line dimensions after widening the viewport.
 - Settings updates coalesce on a background worker, and closing the window flushes the final project selection. Windows cache replacement retries sharing and access errors; persistent failure uses a backup scoped to the running directory. Loading selects the newest valid snapshot. Failure of both locations preserves previous files and leaves the window available for retry.
 - Native structural verification reports the expected PE, ELF or Mach-O header.
 - The repository text and Git commit messages contain ASCII-only British English.

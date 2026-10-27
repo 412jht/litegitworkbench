@@ -117,32 +117,37 @@ class DeferredPanedwindow(ttk.Panedwindow):
 
 
 class ResponsiveSummary(ttk.Frame):
-    """Keep all repository fields inside the available width, wrapping values."""
+    """Flow complete fields into rows and wrap only oversized field values."""
 
     def __init__(self, parent: tk.Misc, fields: Sequence[tuple[str, tk.StringVar]]) -> None:
         super().__init__(parent, padding=(8, 2, 8, 7))
         self.fields = tuple(fields)
+        if not self.fields:
+            raise ValueError("A repository summary requires at least one field")
         self.cells: list[ttk.Frame] = []
         self.labels: list[tuple[ttk.Label, ttk.Label]] = []
         self.columns = len(fields)
         self._layout_job: str | None = None
         self._signature: tuple[object, ...] | None = None
-        self._grid_widths: tuple[int, ...] = ()
-        self._wraps: list[tuple[int, int] | None] = [None] * len(fields)
+        self._wraps: list[int | None] = [None] * len(fields)
+        self._positions = [(0, index) for index in range(len(fields))]
+        self._rows = [ttk.Frame(self) for _field in fields]
+        self._rows[0].pack(fill=tk.X)
+        self._row_count = 1
         style = ttk.Style(self)
-        self._caption_font = font.Font(self, font=style.lookup("TLabel", "font") or "TkDefaultFont")
         self._value_font = font.Font(self, font=style.lookup("Summary.TLabel", "font") or "TkDefaultFont")
+        self._value_padding: list[int] = []
         self._traces: list[tuple[tk.StringVar, str]] = []
         for index, (caption, variable) in enumerate(fields):
             cell = ttk.Frame(self)
-            cell.grid(row=0, column=index, sticky="nw", padx=(0, 12), pady=2)
-            cell.columnconfigure(1, weight=1)
-            title = ttk.Label(cell, text=caption + ":")
+            cell.grid(in_=self._rows[0], row=0, column=index, sticky="nw", padx=(0, 12), pady=2)
+            title = ttk.Label(cell, text=caption + ":", wraplength=0)
             value = ttk.Label(cell, textvariable=variable, style="Summary.TLabel")
             title.grid(row=0, column=0, sticky="nw", padx=(0, 5))
             value.grid(row=0, column=1, sticky="nw")
             self.cells.append(cell)
             self.labels.append((title, value))
+            self._value_padding.append(max(0, value.winfo_reqwidth() - self._value_font.measure(variable.get())))
             self._traces.append((variable, variable.trace_add("write", self._schedule_layout)))
         self.bind("<Configure>", self._schedule_layout, add="+")
         self.bind("<Map>", self._schedule_layout, add="+")
@@ -162,48 +167,33 @@ class ResponsiveSummary(ttk.Frame):
         if signature == self._signature:
             return
         self._signature = signature
-        captions = [self._caption_font.measure(caption + ":") + 8 for caption, _variable in self.fields]
-        minimum_value = self._value_font.measure("origin/feature")
-        minimums = [caption + minimum_value + 17 for caption in captions]
-        value_sizes = [self._value_font.measure(value) for value in values]
-        desired = [min(380, caption + size + 17) for caption, size in zip(captions, value_sizes)]
-        columns = 1
-        for count in (len(self.fields), 3, 2, 1):
-            if count == len(self.fields):
-                fits = sum(desired) <= available
-            else:
-                fits = sum(max(minimums[index::count]) for index in range(count)) <= available
-            if fits or count == 1:
-                columns = count
-                break
-        natural = [max(desired[index::columns]) for index in range(columns)]
-        bases = [max(minimums[index::columns]) for index in range(columns)]
-        if sum(natural) <= available:
-            # Keep short fields at their natural size. Resizing the viewport
-            # then leaves their geometry and wrapping untouched.
-            widths = natural
-        elif sum(bases) > available:
-            widths = [available // columns] * columns
-        else:
-            extra = (available - sum(bases)) // columns
-            widths = [width + extra for width in bases]
-            widths[-1] += available - sum(widths)
-        grid_widths = tuple(widths + [0] * (len(self.fields) - columns))
-        if grid_widths != self._grid_widths:
-            for column, width in enumerate(grid_widths):
-                self.columnconfigure(column, weight=0, minsize=width)
-            self._grid_widths = grid_widths
-        for index, (cell, labels) in enumerate(zip(self.cells, self.labels)):
-            if columns != self.columns:
-                cell.grid_configure(row=index // columns, column=index % columns)
-            width = max(1, widths[index % columns] - 12)
-            caption_width = max(1, min(captions[index], width // 2))
-            value_width = max(1, width - caption_width - 5)
-            wraps = (caption_width if captions[index] - 8 > caption_width else 0, value_width if value_sizes[index] > value_width else 0)
-            if wraps != self._wraps[index]:
-                labels[0].configure(wraplength=wraps[0])
-                labels[1].configure(wraplength=wraps[1])
-                self._wraps[index] = wraps
+        row, column, used, columns = 0, 0, 0, 0
+        for index, (cell, (title, value)) in enumerate(zip(self.cells, self.labels)):
+            caption_width = title.winfo_reqwidth()
+            value_width = self._value_font.measure(values[index]) + self._value_padding[index]
+            natural = caption_width + 5 + value_width + 12
+            width = min(natural, available)
+            if used and used + width > available:
+                row, column, used = row + 1, 0, 0
+            position = (row, column)
+            if position != self._positions[index]:
+                cell.grid_configure(in_=self._rows[row], row=0, column=column)
+                self._positions[index] = position
+            # Captions always retain their full width. Moving the complete pair
+            # to a new row takes precedence over wrapping the value.
+            wrap = 0 if natural <= available else max(1, available - caption_width - 5 - 12 - self._value_padding[index])
+            if wrap != self._wraps[index]:
+                value.configure(wraplength=wrap)
+                self._wraps[index] = wrap
+            used += width
+            column += 1
+            columns = max(columns, column)
+        count = row + 1
+        for index in range(count, self._row_count):
+            self._rows[index].pack_forget()
+        for index in range(self._row_count, count):
+            self._rows[index].pack(fill=tk.X)
+        self._row_count = count
         self.columns = columns
 
     def _dispose(self, event: tk.Event) -> None:
