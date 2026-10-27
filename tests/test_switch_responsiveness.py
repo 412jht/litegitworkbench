@@ -129,8 +129,10 @@ class SwitchingResponsivenessTests(unittest.TestCase):
         self.root.open_repository(str(self.projects[0]))
         self.pump(lambda: first.winfo_ismapped())
         self.assertEqual(1, sum(bool(view.winfo_ismapped()) for view in self.root._all_views))
-        self.root.geometry("1280x760")
-        self.pump(lambda: self.root.winfo_width() == 1280 and first.winfo_width() == 1280 - self.root.sidebar.winfo_width())
+        # Hosted desktops can constrain windows below the application's usual size.
+        self.root.minsize(640, 480)
+        self.root.geometry("800x600")
+        self.pump(lambda: self.root.winfo_width() == 800 and first.winfo_width() == 800 - self.root.sidebar.winfo_width())
         self.assertEqual(self.root.winfo_height(), first.winfo_height())
 
     def test_slow_settings_storage_does_not_block_switching_or_interface_events(self) -> None:
