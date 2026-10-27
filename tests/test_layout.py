@@ -192,12 +192,12 @@ class LayoutTests(unittest.TestCase):
         summary.pack(fill=tk.X)
         self.root.geometry("1300x600")
         self.settle(lambda: summary.winfo_width() == 1300 and summary._layout_job is None)
-        events = []
-        for cell in summary.cells:
-            cell.bind("<Configure>", lambda event: events.append(event))
+        before = [(cell.winfo_x(), cell.winfo_y(), cell.winfo_width(), cell.winfo_height()) for cell in summary.cells]
         self.root.geometry("1500x600")
         self.settle(lambda: summary.winfo_width() == 1500 and summary._layout_job is None)
-        self.assertEqual([], events)
+        # Aqua can forward Configure events from a resized ancestor even when
+        # the child geometry is unchanged. Compare the resulting bounds.
+        self.assertEqual(before, [(cell.winfo_x(), cell.winfo_y(), cell.winfo_width(), cell.winfo_height()) for cell in summary.cells])
 
 
 if __name__ == "__main__":
