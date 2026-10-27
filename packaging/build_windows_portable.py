@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 APPLICATION_ARCHIVE = "LiteGitWorkbench.pyz"
 SOURCE_MODULES = ("litegit.py", "litegit_core.py", "litegit_reword.py", "litegit_diff.py", "litegit_merge.py", "litegit_views.py", "litegit_process.py")
 PROHIBITED_NATIVE_SUFFIXES = {".dll", ".exe", ".pyd"}

@@ -4,9 +4,9 @@ import tkinter as tk
 from difflib import SequenceMatcher
 from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Callable
+from typing import Callable, Sequence
 
-from litegit_diff import DirectoryPreview, FileVersions, aligned_diff
+from litegit_diff import DiffRow, DirectoryPreview, FileVersions, aligned_diff
 from litegit_core import run_git
 from litegit_merge import ConflictFile, PendingUpdate, abort_update, conflict_regions, finish_update, pending_updates, read_conflict, save_resolution, unresolved_paths
 
@@ -138,46 +138,69 @@ class DiffPreview(ttk.Frame):
         self.before_frame, self.after_frame = left, right
         self.before_text, self.after_text = text_panel(left), text_panel(right)
         self._scrolling = False
+        self._render_job: str | None = None
+        self.bind("<Destroy>", self._cancel_render, add="+")
         for source, other in ((self.before_text, self.after_text), (self.after_text, self.before_text)):
             scroll = source.master.grid_slaves(row=0, column=1)[0]
             source.configure(yscrollcommand=lambda first, last, s=scroll, o=other: self._sync_scroll(first, last, s, o))
 
     def _sync_scroll(self, first: str, last: str, scrollbar: ttk.Scrollbar, other: tk.Text) -> None:
         scrollbar.set(first, last)
-        if not self._scrolling:
+        if not self._scrolling and abs(float(first) - other.yview()[0]) > 0.000001:
             self._scrolling = True
             try:
                 other.yview_moveto(first)
             finally:
                 self._scrolling = False
 
+    def _cancel_render(self, _event: tk.Event | None = None) -> None:
+        if self._render_job is not None:
+            self.after_cancel(self._render_job)
+            self._render_job = None
+
     def message(self, content: str) -> None:
+        self._cancel_render()
         self.caption.set(content)
         for text in (self.before_text, self.after_text):
             text.configure(state=tk.NORMAL)
             text.delete("1.0", tk.END)
             text.configure(state=tk.DISABLED)
 
-    def render(self, versions: FileVersions, path: str) -> None:
+    def render(self, versions: FileVersions, path: str, *, rows: Sequence[DiffRow] | None = None) -> None:
         self.message(path + "   |   Removed lines: red   Added lines: green")
         self.before_frame.configure(text="Before / " + versions.before_label)
         self.after_frame.configure(text="After / " + versions.after_label)
-        for text in (self.before_text, self.after_text):
-            text.configure(state=tk.NORMAL)
-        for row in aligned_diff(versions.before, versions.after):
-            for text, number, content, tag in (
-                (self.before_text, row.before_number, row.before, "removed"),
-                (self.after_text, row.after_number, row.after, "added"),
-            ):
-                colour = () if row.kind == "equal" else ("empty" if number is None else tag,)
-                text.insert(tk.END, f"{number:>5} | {content}\n" if number is not None else "      |\n", colour)
+        if rows is None:
+            rows = aligned_diff(versions.before, versions.after)
         if versions.before == versions.after:
             self.caption.set(path + "   |   No differences in this view")
         elif versions.before.rstrip("\r\n") == versions.after.rstrip("\r\n"):
             self.caption.set(path + "   |   End-of-line or final newline changed")
-        for text in (self.before_text, self.after_text):
-            text.configure(state=tk.DISABLED)
-            text.yview_moveto(0)
+
+        def insert_batch(start: int = 0) -> None:
+            self._render_job = None
+            end = min(start + 512, len(rows))
+            for text, before, tag in ((self.before_text, True, "removed"), (self.after_text, False, "added")):
+                arguments: list[object] = []
+                pieces: list[str] = []
+                previous: tuple[str, ...] | None = None
+                for row in rows[start:end]:
+                    number, content = (row.before_number, row.before) if before else (row.after_number, row.after)
+                    colour = () if row.kind == "equal" else ("empty" if number is None else tag,)
+                    if previous is not None and colour != previous:
+                        arguments.extend(("".join(pieces), previous))
+                        pieces = []
+                    pieces.append(f"{number:>5} | {content}\n" if number is not None else "      |\n")
+                    previous = colour
+                if pieces:
+                    arguments.extend(("".join(pieces), previous))
+                    text.configure(state=tk.NORMAL)
+                    text.insert(tk.END, *arguments)
+                    text.configure(state=tk.DISABLED)
+            if end < len(rows):
+                self._render_job = self.after(1, lambda: insert_batch(end))
+
+        insert_batch()
 
     def render_directory(self, preview: DirectoryPreview) -> None:
         self.message(preview.path + "   |   Directory")

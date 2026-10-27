@@ -107,7 +107,7 @@ class ProjectCacheTests(unittest.TestCase):
         self.assertEqual("worktree-with-another-parent / main-project", root.project_tree.item("1", "text"))
         root.remove_project(str(worktree))
         deadline = time.monotonic() + 5
-        while root.active_view._busy_count and time.monotonic() < deadline:
+        while (root.active_view._busy_count or root._settings_saved_revision < root._settings_revision) and time.monotonic() < deadline:
             process_events(root)
             time.sleep(0.01)
         process_events(root)

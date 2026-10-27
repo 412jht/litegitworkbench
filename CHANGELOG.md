@@ -1,5 +1,12 @@
 # Release notes
 
+## 2.1.2
+
+- Switch between retained repository views by raising the existing frame. Keep layouts, tabs, filters, selections, scroll positions and commit drafts in place; initialise the shared theme once per window.
+- Update only the active project selection during cached switches. Avoid filesystem path resolution and sidebar reconstruction on this path.
+- Coalesce project settings updates and save snapshots on one background worker. Flush the final selection on close, retain the previous cache after a failed atomic write, and report save errors through the interface.
+- Calculate aligned file differences on the repository worker and insert coloured preview text in batches. Cancel unfinished batches when another file is selected and avoid redundant synchronised scrolling.
+
 ## 2.1.1
 
 - Isolate frozen Python DLL and shared-library search paths from external Git processes. Retain a private DLL directory for Python extensions while restoring the standard inherited Windows search path once, safely across concurrent refresh workers.

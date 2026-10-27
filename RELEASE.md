@@ -1,4 +1,4 @@
-# LiteGit Workbench 2.1.1 release guide
+# LiteGit Workbench 2.1.2 release guide
 
 ## Release targets
 
@@ -67,12 +67,14 @@ A manual workflow run keeps the packages as Actions artefacts. Pushing a `v*` ta
 ## Release verification checklist
 
 - The full test suite passes on every target.
-- The Windows ZipApp smoke test reports version `2.1.1` and `frozen: false`.
+- The Windows ZipApp smoke test reports version `2.1.2` and `frozen: false`.
 - The Windows portable archive contains `LiteGitWorkbench.pyz` and `run-portable.cmd`.
 - The Windows portable archive and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files.
 - The Windows native ZIP contains `LiteGitWorkbench.exe`, matching the standalone EXE byte for byte.
-- Windows, Linux and macOS frozen smoke tests report version `2.1.1` and `frozen: true`.
+- Windows, Linux and macOS frozen smoke tests report version `2.1.2` and `frozen: true`.
 - Packaged repository smoke tests complete opening, two refresh cycles and commit-history loading. Windows checks report an empty inherited DLL search directory before and after the refresh.
+- Cached project switches preserve drafts and selections without filesystem reads, settings writes or sidebar reconstruction in the switch callback.
+- Settings updates coalesce on a background worker, and closing the window flushes the final project selection. A failed save preserves the previous cache and leaves the window available for retry.
 - Native structural verification reports the expected PE, ELF or Mach-O header.
 - The repository text and Git commit messages contain ASCII-only British English.
 - No private-key marker, access token or personal absolute path appears in source or packaged bytes.

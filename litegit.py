@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import platform
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, Mapping, Sequence
@@ -44,13 +45,13 @@ from litegit_core import (
 )
 from litegit_reword import main as reword_helper_main
 from litegit_process import external_environment, external_runtime_status, find_executable, launch_external, prepare_external_processes
-from litegit_diff import DirectoryPreview, FileVersions, read_file_versions
+from litegit_diff import DiffRow, DirectoryPreview, FileVersions, aligned_diff, read_file_versions
 from litegit_merge import BranchUpdateResult, unresolved_paths, update_branch
 from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip, bind_context_menu, context_row, popup_menu
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 
 
 def application_config_dir() -> Path:
@@ -213,13 +214,17 @@ class RepositoryView(ttk.Frame):
         self._build_ui()
 
     def _build_style(self) -> None:
+        if self.app._style_initialised:
+            return
         style = ttk.Style(self)
         for theme in ("vista", "clam"):
             if theme in style.theme_names():
-                style.theme_use(theme)
+                if style.theme_use() != theme:
+                    style.theme_use(theme)
                 break
         style.configure("Treeview", rowheight=25)
         style.configure("Summary.TLabel", font=("Segoe UI", 10, "bold"))
+        self.app._style_initialised = True
 
     def _build_ui(self) -> None:
         top = ttk.Frame(self, padding=(8, 8, 8, 4))
@@ -1185,20 +1190,22 @@ class RepositoryView(ttk.Frame):
         repository, scope = self.repository, self.diff_scope_var.get()
         self.diff_preview.message("Loading " + entry.path + "...")
 
-        def collect() -> tuple[FileVersions | DirectoryPreview | None, str]:
+        def collect() -> tuple[FileVersions | DirectoryPreview | None, list[DiffRow] | None, str]:
             try:
-                return read_file_versions(repository, entry, scope), ""
+                versions = read_file_versions(repository, entry, scope)
+                rows = aligned_diff(versions.before, versions.after) if isinstance(versions, FileVersions) else None
+                return versions, rows, ""
             except (ValueError, OSError) as exc:
-                return None, str(exc)
+                return None, None, str(exc)
 
-        def render(result: tuple[FileVersions | DirectoryPreview | None, str]) -> None:
-            versions, error = result
+        def render(result: tuple[FileVersions | DirectoryPreview | None, list[DiffRow] | None, str]) -> None:
+            versions, rows, error = result
             if error:
                 self.diff_preview.message(error)
             elif isinstance(versions, DirectoryPreview):
                 self.diff_preview.render_directory(versions)
             elif versions is not None:
-                self.diff_preview.render(versions, entry.path)
+                self.diff_preview.render(versions, entry.path, rows=rows)
 
         self._submit(
             "Reading differences...",
@@ -1760,6 +1767,14 @@ class LiteGitApp(tk.Tk):
         self.transient_mode = transient
         self.background_errors: list[str] = []
         self.settings = {} if transient else load_settings()
+        self._style_initialised = False
+        self._settings_executor = None if transient else ThreadPoolExecutor(max_workers=1, thread_name_prefix="litegit-settings")
+        self._settings_future: Future[None] | None = None
+        self._settings_save_job: str | None = None
+        self._settings_poll_job: str | None = None
+        self._settings_revision = 0
+        self._settings_inflight_revision = 0
+        self._settings_saved_revision = 0
         self.views: dict[str, RepositoryView] = {}
         self._all_views: set[RepositoryView] = set()
         saved = self.settings.get("projects", [])
@@ -1778,12 +1793,15 @@ class LiteGitApp(tk.Tk):
         self._closing = False
         self._suppress_project_selection = False
         self._project_menu_path: str | None = None
+        self._project_rows: dict[str, str] = {}
         self._build_project_sidebar()
         self.content = ttk.Frame(self)
         self.content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.content.rowconfigure(0, weight=1)
+        self.content.columnconfigure(0, weight=1)
         self.active_view = self._new_view()
         self._empty_view = self.active_view
-        self.active_view.pack(fill=tk.BOTH, expand=True)
+        self.active_view.tkraise()
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<F5>", lambda _event: self.active_view.refresh_all())
         self.bind("<Control-o>", lambda _event: self.active_view.choose_repository())
@@ -1823,11 +1841,13 @@ class LiteGitApp(tk.Tk):
 
     @staticmethod
     def _project_key(repository: Path) -> str:
-        return os.path.normcase(str(repository.resolve()))
+        # Opened repositories are canonicalised by the background Git discovery.
+        return os.path.normcase(os.path.abspath(repository))
 
     def _new_view(self) -> RepositoryView:
         view = RepositoryView(self)
         self._all_views.add(view)
+        view.grid(row=0, column=0, sticky="nsew")
         return view
 
     def _save_project_state(self) -> None:
@@ -1839,14 +1859,64 @@ class LiteGitApp(tk.Tk):
         }
         if self.transient_mode:
             return
+        self._settings_revision += 1
+        if self._settings_save_job is not None:
+            self.after_cancel(self._settings_save_job)
+        self._settings_save_job = self.after(250, self._begin_settings_save)
+
+    def _settings_save_error(self, error: Exception) -> None:
+        messagebox.showerror(APP_NAME, f"The project list remains available in this window, but its cache could not be saved:\n{PROJECT_CACHE_FILE}\n\n{error}", parent=self)
+
+    def _begin_settings_save(self) -> None:
+        self._settings_save_job = None
+        if self._closing or self._settings_future is not None or self._settings_executor is None:
+            return
+        self._settings_inflight_revision = self._settings_revision
+        self._settings_future = self._settings_executor.submit(save_settings, copy.deepcopy(self.settings))
+        self._settings_poll_job = self.after(30, self._poll_settings_save)
+
+    def _poll_settings_save(self) -> None:
+        self._settings_poll_job = None
+        future = self._settings_future
+        if future is None or self._closing:
+            return
+        if not future.done():
+            self._settings_poll_job = self.after(30, self._poll_settings_save)
+            return
         try:
-            save_settings(self.settings)
-        except OSError as exc:
-            messagebox.showerror(APP_NAME, f"The project list remains available in this window, but its cache could not be saved:\n{PROJECT_CACHE_FILE}\n\n{exc}", parent=self)
+            future.result()
+            self._settings_saved_revision = self._settings_inflight_revision
+        except Exception as error:
+            self._settings_save_error(error)
+        self._settings_future = None
+        if self._settings_revision > self._settings_inflight_revision and self._settings_save_job is None:
+            self._begin_settings_save()
+
+    def _finish_settings_save(self) -> bool:
+        for attribute in ("_settings_save_job", "_settings_poll_job"):
+            job = getattr(self, attribute)
+            if job is not None:
+                self.after_cancel(job)
+                setattr(self, attribute, None)
+        if self._settings_future is not None:
+            try:
+                self._settings_future.result()
+                self._settings_saved_revision = self._settings_inflight_revision
+            except Exception:
+                pass  # Retry the latest complete snapshot before closing.
+            self._settings_future = None
+        if not self.transient_mode and self._settings_saved_revision < self._settings_revision:
+            try:
+                save_settings(copy.deepcopy(self.settings))
+                self._settings_saved_revision = self._settings_revision
+            except Exception as error:
+                self._settings_save_error(error)
+                return False
+        return True
 
     def remember_main_worktree(self, repository: Path, main: Path) -> None:
         key = self._project_key(repository)
-        main = main.resolve()
+        main = Path(os.path.abspath(main))
         if self.project_main_paths.get(key) != main:
             self.project_main_paths[key] = main
             self._save_project_state()
@@ -1885,7 +1955,7 @@ class LiteGitApp(tk.Tk):
         row = self.project_tree.identify_row(event.y)
         if row and row.isdigit() and int(row) < len(self.project_paths):
             path = self.project_paths[int(row)]
-            return self._project_name(path) + "\n" + str(Path(path).resolve())
+            return self._project_name(path) + "\n" + str(Path(path))
         return None
 
     def _on_project_context_menu(self, event: tk.Event) -> str:
@@ -1910,7 +1980,6 @@ class LiteGitApp(tk.Tk):
         self._open_request += 1
         self.project_paths = [existing for existing in self.project_paths if self._project_key(Path(existing)) != key]
         if self.active_view.repository and self._project_key(self.active_view.repository) == key:
-            self.active_view.pack_forget()
             remaining = next((self.views[self._project_key(Path(existing))] for existing in self.project_paths if self._project_key(Path(existing)) in self.views), None)
             if remaining is not None:
                 self._activate_repository(remaining.repository)
@@ -1918,7 +1987,7 @@ class LiteGitApp(tk.Tk):
                 if self._empty_view.repository is not None:
                     self._empty_view = self._new_view()
                 self.active_view = self._empty_view
-                self.active_view.pack(fill=tk.BOTH, expand=True)
+                self.active_view.tkraise()
                 self.settings["last_repository"] = ""
                 self.title(f"{APP_NAME} {VERSION}")
                 if self.project_paths:
@@ -1944,14 +2013,20 @@ class LiteGitApp(tk.Tk):
             self.project_label.pack(side=tk.LEFT)
             self.project_hint.pack(fill=tk.X, pady=8)
         self.project_tree.delete(*self.project_tree.get_children())
-        active = self._project_key(self.active_view.repository) if self.active_view.repository else ""
+        self._project_rows = {}
         for index, path in enumerate(self.project_paths):
             repository = Path(path)
             label = f"{index + 1:02d}" if self.sidebar_collapsed else self._project_name(path)
             self.project_tree.insert("", tk.END, iid=str(index), text=label)
-            if self._project_key(repository) == active:
-                self.project_tree.selection_set(str(index))
-                self.project_tree.see(str(index))
+            self._project_rows[self._project_key(repository)] = str(index)
+        self._select_active_project()
+
+    def _select_active_project(self) -> None:
+        active = self._project_key(self.active_view.repository) if self.active_view.repository else ""
+        row = self._project_rows.get(active)
+        if row is not None and self.project_tree.selection() != (row,):
+            self.project_tree.selection_set(row)
+            self.project_tree.see(row)
 
     def _select_project(self, _event: tk.Event[tk.Misc] | None = None) -> None:
         if self._suppress_project_selection:
@@ -1982,21 +2057,35 @@ class LiteGitApp(tk.Tk):
     def _activate_repository(self, repository: Path) -> None:
         key = self._project_key(repository)
         view = self.views.get(key)
+        listed = key in self._project_rows
+        if view is self.active_view and view.repository is not None and listed:
+            return
         new = view is None
         if view is None:
             view = self.active_view if self.active_view.repository is None else self._new_view()
             self.views[key] = view
-        self.active_view.pack_forget()
+        previous = self.active_view
+        focused = self.focus_get()
+        restore_focus = focused is not None and str(focused).startswith(str(previous) + ".")
+        if restore_focus:
+            previous._last_focus = focused
         self.active_view = view
-        view.pack(fill=tk.BOTH, expand=True)
+        view.tkraise()
+        if restore_focus:
+            target = getattr(view, "_last_focus", None)
+            (target if target is not None and target.winfo_exists() else view).focus_set()
         if new:
             view._repository_opened(repository)
-        if not any(self._project_key(Path(path)) == key for path in self.project_paths):
+        if not listed:
             self.project_paths.append(str(repository))
         self.settings["last_repository"] = str(repository)
         self._save_project_state()
         self.title(f"{APP_NAME} {VERSION} - {repository.name}")
-        self._render_projects()
+        self.project_tooltip.hide()
+        if not listed:
+            self._render_projects()
+        else:
+            self._select_active_project()
 
     def _close(self) -> None:
         if self._closing:
@@ -2009,7 +2098,11 @@ class LiteGitApp(tk.Tk):
         if any(editor.has_unsaved_changes() for editor in editors):
             if not messagebox.askyesno(APP_NAME, "Discard unsaved conflict editor results and close? Pending Git conflicts will be preserved for recovery.", icon="warning", parent=self):
                 return
+        if not self._finish_settings_save():
+            return
         self._closing = True
+        if self._settings_executor is not None:
+            self._settings_executor.shutdown(wait=False, cancel_futures=True)
         for view in views:
             view._close()
         self.destroy()

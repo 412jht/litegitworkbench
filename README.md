@@ -40,6 +40,7 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 - Keep several repositories in one window with a collapsible project sidebar.
 - Add a Git directory and switch back instantly without recreating its interface.
 - Preserve each open project's tabs, filters, selections, comparisons, console and commit draft during switching.
+- Keep cached project switches responsive while settings save in the background and large file previews load in batches.
 - Remember the project list, sidebar state and most recently opened repository across restarts.
 - Show just the project name for the main worktree and `worktree-name / main-project` for linked worktrees.
 - Hover over project names or collapsed numbered shortcuts to see the complete name and absolute path.
