@@ -75,6 +75,28 @@ class SwitchingResponsivenessTests(unittest.TestCase):
         self.assertEqual("Keep the first draft", first.commit_message_var.get())
         self.assertEqual(("0",), self.root.project_tree.selection())
 
+    def test_diagnostic_launch_keeps_project_paths_without_starting_git_or_saving(self) -> None:
+        settings = {"projects": [str(self.projects[0])], "last_repository": str(self.projects[0])}
+        self.root._close()
+        with (
+            patch("litegit.load_settings", return_value=settings),
+            patch.object(litegit.LiteGitApp, "_refresh_project_labels") as labels,
+            patch.object(litegit.LiteGitApp, "open_repository") as opened,
+            patch.object(litegit.LiteGitApp, "_save_project_state") as save,
+        ):
+            root = litegit.LiteGitApp(restore_projects=False)
+            root.withdraw()
+            try:
+                root.after(150, root.quit)
+                root.mainloop()
+                self.assertEqual(settings["projects"], root.project_paths)
+                self.assertIsNone(root.active_view.repository)
+                labels.assert_not_called()
+                opened.assert_not_called()
+                save.assert_not_called()
+            finally:
+                root._close()
+
     def test_rapid_switches_write_one_latest_snapshot_on_a_worker(self) -> None:
         main_thread = threading.get_ident()
         writer_threads = []

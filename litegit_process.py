@@ -14,7 +14,14 @@ _dll_directory_handle: object | None = None
 _windows_runtime_ready = False
 
 
+def is_packaged_application() -> bool:
+    return bool(getattr(sys, "frozen", False) or globals().get("__compiled__"))
+
+
 def _bundle_directory() -> Path | None:
+    compiled = globals().get("__compiled__")
+    if compiled is not None:
+        return Path(compiled.containing_dir).resolve()
     directory = getattr(sys, "_MEIPASS", None)
     return Path(directory).resolve() if getattr(sys, "frozen", False) and directory else None
 
@@ -38,6 +45,9 @@ def external_environment(base: Mapping[str, str] | None = None) -> dict[str, str
             environment[name] = os.pathsep.join(
                 entry for entry in environment[name].split(os.pathsep) if _outside_bundle(entry, bundle)
             )
+    for name in ("TCL_LIBRARY", "TK_LIBRARY", "PYTHONHOME"):
+        if name in environment and not _outside_bundle(environment[name], bundle):
+            environment.pop(name)
     if sys.platform not in {"win32", "darwin"}:
         name = "LIBPATH" if sys.platform.startswith("aix") else "LD_LIBRARY_PATH"
         original = environment.get(name + "_ORIG")
@@ -84,7 +94,10 @@ def find_executable(name: str, environment: Mapping[str, str]) -> Path | None:
 
 
 def external_runtime_status() -> dict[str, object]:
-    status: dict[str, object] = {"frozen": bool(getattr(sys, "frozen", False))}
+    status: dict[str, object] = {
+        "frozen": is_packaged_application(),
+        "packager": "Nuitka" if globals().get("__compiled__") is not None else "PyInstaller" if getattr(sys, "frozen", False) else "source",
+    }
     bundle = _bundle_directory()
     if bundle is not None:
         status["bundle_in_application_directory"] = bundle.is_relative_to(Path(sys.executable).resolve().parent)

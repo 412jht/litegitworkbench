@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from litegit_startup import begin_startup, recorded_stages, startup_phase
+
+begin_startup()
+
 import copy
 import gc
 import hashlib
@@ -46,14 +50,14 @@ from litegit_core import (
     stash_format,
 )
 from litegit_reword import main as reword_helper_main
-from litegit_process import external_environment, external_runtime_status, find_executable, launch_external, prepare_external_processes
+from litegit_process import external_environment, external_runtime_status, find_executable, is_packaged_application, launch_external, prepare_external_processes
 from litegit_diff import DiffRow, DirectoryPreview, FileVersions, aligned_diff, read_file_versions
 from litegit_merge import BranchUpdateResult, unresolved_paths, update_branch
 from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip, bind_context_menu, context_row, popup_menu
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.3"
+VERSION = "2.1.4"
 
 
 def application_config_dir() -> Path:
@@ -78,7 +82,7 @@ def _editor_argument(value: str | os.PathLike[str]) -> str:
 
 def build_reword_environment(target: str, message: str) -> dict[str, str]:
     executable = _editor_argument(sys.executable)
-    if getattr(sys, "frozen", False):
+    if is_packaged_application():
         editor_prefix = f"{executable} --reword-helper"
     elif Path(sys.argv[0]).suffix.casefold() == ".pyz":
         archive = _editor_argument(Path(sys.argv[0]).resolve())
@@ -1805,10 +1809,11 @@ class RepositoryView(ttk.Frame):
 
 
 class LiteGitApp(tk.Tk):
-    def __init__(self, *, transient: bool = False) -> None:
+    def __init__(self, *, transient: bool = False, restore_projects: bool = True) -> None:
         # Dispose of earlier closed Tk interpreters on the interface thread.
         gc.collect()
         super().__init__()
+        startup_phase("tk_created")
         self.title(f"{APP_NAME} {VERSION}")
         self.geometry("1500x900")
         self.minsize(1100, 680)
@@ -1816,6 +1821,7 @@ class LiteGitApp(tk.Tk):
         self.transient_mode = transient
         self.background_errors: list[str] = []
         self.settings = {} if transient else load_settings()
+        startup_phase("settings_loaded")
         self._style_initialised = False
         self._settings_executor = None if transient else ThreadPoolExecutor(max_workers=1, thread_name_prefix="litegit-settings")
         self._settings_future: Future[None] | None = None
@@ -1852,11 +1858,12 @@ class LiteGitApp(tk.Tk):
         self.bind("<F5>", lambda _event: self.active_view.refresh_all())
         self.bind("<Control-o>", lambda _event: self.active_view.choose_repository())
         self._render_projects()
-        if self.project_paths:
+        startup_phase("interface_built")
+        if self.project_paths and restore_projects:
             self._save_project_state()
             self._refresh_project_labels()
         last = self.settings.get("last_repository", "")
-        if isinstance(last, str) and last and Path(last).is_dir():
+        if restore_projects and isinstance(last, str) and last and Path(last).is_dir():
             self.after(100, lambda: self.open_repository(last))
 
     def _build_project_sidebar(self) -> None:
@@ -2108,6 +2115,7 @@ class LiteGitApp(tk.Tk):
     def open_repository(self, path: str) -> None:
         if not path.strip():
             return
+        startup_phase("repository_open_requested")
         key = self._project_key(Path(path))
         self._open_request += 1
         request = self._open_request
@@ -2254,7 +2262,7 @@ def main() -> int:
         payload = {
             "app": APP_NAME,
             "version": VERSION,
-            "frozen": bool(getattr(sys, "frozen", False)),
+            "frozen": is_packaged_application(),
             "platform": platform.system(),
             "machine": platform.machine(),
             "python": platform.python_version(),
@@ -2271,10 +2279,14 @@ def main() -> int:
                 }
                 Path(sys.argv[2]).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
                 return 1
+        payload["startup_stages"] = recorded_stages()
         Path(sys.argv[2]).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return 0
-    app = LiteGitApp()
+    app = LiteGitApp(restore_projects="--no-restore" not in sys.argv[1:])
+    app.bind("<Map>", lambda event: startup_phase("window_mapped") if event.widget is app else None, add="+")
+    startup_phase("event_loop_started")
     app.mainloop()
+    startup_phase("event_loop_finished")
     return 0
 
 

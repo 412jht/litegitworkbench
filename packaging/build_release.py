@@ -18,7 +18,7 @@ from typing import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_POLICY_PATH = PROJECT_ROOT / ".litegit-local-policy.json"
-VERSION = "2.1.3"
+VERSION = "2.1.4"
 
 
 def normalised_architecture() -> str:
@@ -73,6 +73,21 @@ def run(command: list[str], *, cwd: Path = PROJECT_ROOT, timeout: int | None = N
 
 
 def build(dist_dir: Path, work_dir: Path) -> Path:
+    if platform.system() == "Windows":
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        run([
+            sys.executable, "-m", "nuitka", "--standalone", "--enable-plugin=tk-inter",
+            "--windows-console-mode=disable", "--msvc=latest", "--assume-yes-for-downloads",
+            "--jobs=4", "--lto=no", f"--output-dir={dist_dir}",
+            "--output-folder-name=LiteGitWorkbench.dist", "--output-filename=LiteGitWorkbench.exe",
+            f"--report={work_dir / 'nuitka-report.xml'}",
+            "--company-name=LiteGit Workbench contributors", "--product-name=LiteGit Workbench",
+            "--file-description=Lightweight cross-platform Git workbench",
+            f"--file-version={VERSION}.0", f"--product-version={VERSION}.0",
+            str(PROJECT_ROOT / "litegit.py"),
+        ])
+        return dist_dir / "LiteGitWorkbench.dist"
     run(
         [
             sys.executable,
@@ -88,8 +103,6 @@ def build(dist_dir: Path, work_dir: Path) -> Path:
         ]
     )
     system = platform.system()
-    if system == "Windows":
-        return dist_dir / "LiteGitWorkbench"
     if system == "Darwin":
         return dist_dir / "LiteGit Workbench.app"
     return dist_dir / "LiteGitWorkbench"
@@ -117,8 +130,7 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
     if system == "Windows" and not header.startswith(b"MZ"):
         raise RuntimeError(f"Packaged executable has no PE header: {header!r}")
     if system == "Windows" and artefact.is_dir():
-        runtime = artefact / "_internal"
-        if not runtime.is_dir() or not (runtime / "base_library.zip").is_file() or not any(runtime.glob("python*.dll")):
+        if not any(artefact.glob("python*.dll")) or not any(artefact.rglob("_tkinter.pyd")) or not any(artefact.rglob("init.tcl")) or not any(artefact.rglob("tk.tcl")):
             raise RuntimeError("The Windows directory bundle is missing its adjacent Python runtime")
     if system == "Linux" and header != b"\x7fELF":
         raise RuntimeError(f"Packaged executable has no ELF header: {header!r}")
@@ -172,7 +184,24 @@ def smoke_test(artefact: Path) -> dict[str, object]:
     if platform.system() == "Windows" and artefact.is_dir():
         if result["repository_check"]["runtime"].get("bundle_in_application_directory") is not True:
             raise RuntimeError("The directory bundle did not use its adjacent runtime")
+        if result["repository_check"]["runtime"].get("packager") != "Nuitka":
+            raise RuntimeError("The Windows package did not use the configured standalone compiler")
     return result
+
+
+def smoke_test_reword_helper(artefact: Path) -> dict[str, str]:
+    executable = executable_inside(artefact)
+    with tempfile.TemporaryDirectory(prefix="litegit-helper-smoke-") as directory:
+        root = Path(directory)
+        sequence, message = root / "sequence.txt", root / "message.txt"
+        sequence.write_text("pick abc123 Original\n", encoding="ascii")
+        message.write_text("Original\n", encoding="ascii")
+        environment = dict(os.environ, LITEGIT_REWORD_TARGET="abc123", LITEGIT_REWORD_MESSAGE="Updated helper smoke message")
+        for mode, path in (("sequence", sequence), ("message", message)):
+            subprocess.run([str(executable), "--reword-helper", mode, str(path)], env=environment, check=True, timeout=60)
+        if sequence.read_text(encoding="utf-8") != "reword abc123 Original\n" or message.read_text(encoding="utf-8") != "Updated helper smoke message\n":
+            raise RuntimeError("The packaged commit editor helper did not preserve its command-line contract")
+    return {"status": "passed"}
 
 
 def package(artefact: Path, release_dir: Path) -> Path:
@@ -194,6 +223,8 @@ def package(artefact: Path, release_dir: Path) -> Path:
             bundle.write(PROJECT_ROOT / "README.md", "README.md")
             bundle.write(PROJECT_ROOT / "RELEASE.md", "RELEASE.md")
             bundle.write(PROJECT_ROOT / "CHANGELOG.md", "CHANGELOG.md")
+            if artefact.is_dir():
+                bundle.write(PROJECT_ROOT / "packaging" / "start-without-restore.cmd", "start-without-restore.cmd")
         if artefact.is_file():
             shutil.copy2(artefact, archive.with_suffix(".exe"))
         return archive
@@ -244,7 +275,7 @@ def main() -> int:
     if arguments.skip_smoke_test:
         smoke: dict[str, object] = {"status": arguments.smoke_test_status}
     else:
-        smoke = {"status": "passed", "result": smoke_test(artefact)}
+        smoke = {"status": "passed", "result": smoke_test(artefact), "reword_helper": smoke_test_reword_helper(artefact)}
     archive = package(artefact, arguments.output_dir.resolve())
     checksum = sha256(archive)
     checksums = {archive.name: checksum}
@@ -256,7 +287,7 @@ def main() -> int:
         "platform": platform.system(),
         "architecture": normalised_architecture(),
         "python": platform.python_version(),
-        "packager": "PyInstaller directory bundle" if windows_directory_bundle else "PyInstaller single-file bootloader",
+        "packager": "Nuitka standalone directory" if windows_directory_bundle else "PyInstaller single-file bootloader",
         "archive": archive.name,
         "sha256": checksum,
         "structural_verification": structure,
@@ -267,10 +298,11 @@ def main() -> int:
         metadata["executable"] = {
             "file": executable.relative_to(artefact).as_posix(),
             "sha256": sha256(executable),
-            "runtime_directory": "_internal",
+            "runtime_directory": ".",
             "standalone": False,
             "code_signing": "unsigned",
         }
+        metadata["compiler"] = {"name": "Nuitka", "version": "4.3.1", "toolchain": "MSVC"}
     elif platform.system() == "Windows":
         executable = archive.with_suffix(".exe")
         executable_checksum = sha256(executable)

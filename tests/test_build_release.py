@@ -54,29 +54,43 @@ class LocalBuildPolicyTests(unittest.TestCase):
 
 
 class WindowsNativeReleaseTests(unittest.TestCase):
+    def test_windows_builder_uses_a_standalone_compiler_and_preserves_the_tk_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(BUILD_RELEASE.platform, "system", return_value="Windows"), mock.patch.object(BUILD_RELEASE, "run") as run:
+                artefact = BUILD_RELEASE.build(root / "dist", root / "work")
+            self.assertEqual(root / "dist" / "LiteGitWorkbench.dist", artefact)
+            command = run.call_args.args[0]
+            self.assertIn("nuitka", command)
+            self.assertIn("--standalone", command)
+            self.assertIn("--enable-plugin=tk-inter", command)
+            self.assertIn("--msvc=latest", command)
+            self.assertNotIn("--onefile", command)
+
     def test_small_directory_executable_requires_a_complete_adjacent_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artefact = Path(directory) / "LiteGitWorkbench"
-            runtime = artefact / "_internal"
+            runtime = artefact
             runtime.mkdir(parents=True)
             (artefact / "LiteGitWorkbench.exe").write_bytes(b"MZ" + bytes(128 * 1024))
             with mock.patch.object(BUILD_RELEASE.platform, "system", return_value="Windows"):
                 with self.assertRaisesRegex(RuntimeError, "adjacent Python runtime"):
                     BUILD_RELEASE.verify_artefact_structure(artefact)
-                (runtime / "base_library.zip").write_bytes(b"Standard library fixture")
                 (runtime / "python313.dll").write_bytes(b"Python runtime fixture")
+                (runtime / "_tkinter.pyd").write_bytes(b"Tkinter extension fixture")
+                (runtime / "init.tcl").write_bytes(b"Tcl runtime fixture")
+                (runtime / "tk.tcl").write_bytes(b"Tk runtime fixture")
                 self.assertEqual("passed", BUILD_RELEASE.verify_artefact_structure(artefact)["status"])
 
     def test_directory_bundle_preserves_the_exe_and_adjacent_runtime_without_a_standalone_download(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             artefact = root / "LiteGitWorkbench"
-            runtime = artefact / "_internal"
+            runtime = artefact
             runtime.mkdir(parents=True)
             executable = artefact / "LiteGitWorkbench.exe"
             executable.write_bytes(b"MZ directory executable fixture")
             (runtime / "python313.dll").write_bytes(b"Python runtime fixture")
-            (runtime / "base_library.zip").write_bytes(b"Standard library fixture")
             with (
                 mock.patch.object(BUILD_RELEASE.platform, "system", return_value="Windows"),
                 mock.patch.object(BUILD_RELEASE, "normalised_architecture", return_value="x86_64"),
@@ -86,14 +100,14 @@ class WindowsNativeReleaseTests(unittest.TestCase):
             self.assertFalse(archive.with_suffix(".exe").exists())
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(executable.read_bytes(), bundle.read("LiteGitWorkbench.exe"))
-                self.assertEqual(b"Python runtime fixture", bundle.read("_internal/python313.dll"))
-                self.assertIn("_internal/base_library.zip", bundle.namelist())
+                self.assertEqual(b"Python runtime fixture", bundle.read("python313.dll"))
+                self.assertIn("start-without-restore.cmd", bundle.namelist())
 
     def test_directory_bundle_metadata_and_manifest_require_the_complete_runtime_zip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             artefact = root / "LiteGitWorkbench"
-            runtime = artefact / "_internal"
+            runtime = artefact
             runtime.mkdir(parents=True)
             executable = artefact / "LiteGitWorkbench.exe"
             executable.write_bytes(b"MZ directory executable fixture")
@@ -106,14 +120,15 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 mock.patch.object(BUILD_RELEASE, "build", return_value=artefact),
                 mock.patch.object(BUILD_RELEASE, "verify_artefact_structure", return_value={"status": "passed"}),
                 mock.patch.object(BUILD_RELEASE, "smoke_test", return_value={"version": BUILD_RELEASE.VERSION, "frozen": True}),
+                mock.patch.object(BUILD_RELEASE, "smoke_test_reword_helper", return_value={"status": "passed"}),
                 mock.patch.object(BUILD_RELEASE.sys, "argv", ["build_release.py", "--output-dir", str(release), "--build-dir", str(root / "build")]),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(0, BUILD_RELEASE.main())
             archive = release / f"LiteGitWorkbench-{BUILD_RELEASE.VERSION}-windows-x86_64.zip"
             metadata = json.loads(archive.with_suffix(".zip.json").read_text(encoding="utf-8"))
-            self.assertEqual("PyInstaller directory bundle", metadata["packager"])
-            self.assertEqual("_internal", metadata["executable"]["runtime_directory"])
+            self.assertEqual("Nuitka standalone directory", metadata["packager"])
+            self.assertEqual(".", metadata["executable"]["runtime_directory"])
             self.assertFalse(metadata["executable"]["standalone"])
             self.assertEqual(BUILD_RELEASE.sha256(executable), metadata["executable"]["sha256"])
             self.assertNotIn("standalone_executable", metadata)
@@ -173,6 +188,7 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 mock.patch.object(BUILD_RELEASE, "build", return_value=artefact),
                 mock.patch.object(BUILD_RELEASE, "verify_artefact_structure", return_value={"status": "passed"}),
                 mock.patch.object(BUILD_RELEASE, "smoke_test", return_value={"version": BUILD_RELEASE.VERSION, "frozen": True}),
+                mock.patch.object(BUILD_RELEASE, "smoke_test_reword_helper", return_value={"status": "passed"}),
                 mock.patch.object(
                     BUILD_RELEASE.sys,
                     "argv",

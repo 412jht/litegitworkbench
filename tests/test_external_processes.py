@@ -6,11 +6,13 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import litegit_core
 import litegit_merge
 import litegit_process
+import litegit
 
 
 class ExternalProcessTests(unittest.TestCase):
@@ -42,6 +44,21 @@ class ExternalProcessTests(unittest.TestCase):
         self.assertEqual(original, cleaned)
         self.assertIsNot(original, cleaned)
 
+    def test_compiled_runtime_is_recognised_without_inventing_pyinstaller_attributes(self) -> None:
+        with (
+            mock.patch.dict(litegit_process.__dict__, {"__compiled__": SimpleNamespace(containing_dir=str(self.bundle))}),
+            mock.patch.object(litegit_process.sys, "platform", "linux"),
+            mock.patch.object(litegit_process.sys, "frozen", False, create=True),
+            mock.patch.object(litegit_process.sys, "executable", str(self.bundle / "LiteGitWorkbench.exe")),
+        ):
+            self.assertTrue(litegit_process.is_packaged_application())
+            self.assertEqual(self.bundle, litegit_process._bundle_directory())
+            self.assertEqual("Nuitka", litegit_process.external_runtime_status()["packager"])
+            self.assertTrue(litegit_process.external_runtime_status()["bundle_in_application_directory"])
+            environment = litegit.build_reword_environment("abc123", "Updated message")
+            self.assertIn("--reword-helper sequence", environment["GIT_SEQUENCE_EDITOR"])
+            self.assertNotIn("litegit.py", environment["GIT_SEQUENCE_EDITOR"])
+
     def test_bundle_paths_are_removed_without_removing_neighbours_or_authentication(self) -> None:
         self.frozen()
         neighbour = self.root / "bundle-neighbour"
@@ -51,6 +68,8 @@ class ExternalProcessTests(unittest.TestCase):
             "GIT_SSH_COMMAND": "custom-ssh",
             "GIT_EDITOR": "custom-editor",
             "SSH_AUTH_SOCK": "existing-agent",
+            "TCL_LIBRARY": str(self.bundle / "tcl"),
+            "TK_LIBRARY": str(self.system / "tk"),
         }
         cleaned = litegit_process.external_environment(original)
         self.assertEqual(os.pathsep.join((str(neighbour), str(self.system))), cleaned["PATH"])
@@ -58,6 +77,8 @@ class ExternalProcessTests(unittest.TestCase):
         self.assertEqual("existing-agent", cleaned["SSH_AUTH_SOCK"])
         self.assertEqual("custom-editor", cleaned["GIT_EDITOR"])
         self.assertEqual("custom-ssh", cleaned["GIT_SSH_COMMAND"])
+        self.assertNotIn("TCL_LIBRARY", cleaned)
+        self.assertEqual(str(self.system / "tk"), cleaned["TK_LIBRARY"])
         self.assertIn(str(self.bundle), original["PATH"])
 
     def test_linux_library_path_is_restored_for_git_only(self) -> None:

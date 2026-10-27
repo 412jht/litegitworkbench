@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from litegit_process import external_environment, find_executable, prepare_external_processes
+from litegit_startup import startup_phase
 
 
 FIELD_SEPARATOR = "\x1f"
@@ -153,8 +154,11 @@ def _git_process(
         if executable is None:
             raise FileNotFoundError("Git was not found on PATH")
         command = (str(executable), *command[1:])
+        startup_phase("git_runtime_preparation_started")
         prepare_external_processes()
+        startup_phase("git_runtime_prepared")
         text_options = {} if binary else {"text": True, "encoding": "utf-8", "errors": "replace"}
+        startup_phase("git_process_requested")
         process = subprocess.run(
             command,
             stdout=subprocess.PIPE,
@@ -171,6 +175,7 @@ def _git_process(
         raise GitError(command, 124, f"The Git command exceeded {timeout} seconds.\n{output}") from exc
     except OSError as exc:
         raise GitError(command, 126, f"The external Git runtime could not be prepared: {exc}") from exc
+    startup_phase("git_process_completed")
     if check and process.returncode:
         output = process.stderr.decode("utf-8", errors="replace") if binary else process.stdout
         raise GitError(command, process.returncode, output)
