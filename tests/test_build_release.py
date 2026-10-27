@@ -109,7 +109,7 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "adjacent Python runtime"):
                     BUILD_RELEASE.verify_artefact_structure(artefact)
                 (runtime / "python313.dll").write_bytes(b"Python runtime fixture")
-                (runtime / "_tkinter.pyd").write_bytes(b"Tkinter extension fixture")
+                (runtime / "_tkinter.cp314-win_amd64.pyd").write_bytes(b"Tkinter extension fixture")
                 (runtime / "init.tcl").write_bytes(b"Tcl runtime fixture")
                 (runtime / "tk.tcl").write_bytes(b"Tk runtime fixture")
                 (runtime / "pythonw.exe").touch()

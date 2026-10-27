@@ -124,6 +124,11 @@ def external_runtime_status() -> dict[str, object]:
     if bundle is not None:
         application_directory = launcher.parent if launcher else Path(sys.executable).resolve().parent
         status["bundle_in_application_directory"] = bundle.is_relative_to(application_directory)
+        if launcher is not None:
+            status["python_prefix_in_runtime"] = Path(sys.prefix).resolve() == bundle and Path(sys.base_prefix).resolve() == bundle
+            status["standard_library_in_runtime"] = Path(os.__file__).resolve().is_relative_to(bundle)
+            extension = sys.modules.get("_tkinter")
+            status["tkinter_extension_in_runtime"] = bool(extension and Path(extension.__file__).resolve().is_relative_to(bundle))
     if sys.platform == "win32" and bundle is not None:
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         query = kernel.GetDllDirectoryW

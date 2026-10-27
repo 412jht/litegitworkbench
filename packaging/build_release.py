@@ -190,10 +190,18 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
         raise RuntimeError(f"Packaged executable has no PE header: {header!r}")
     if system == "Windows" and artefact.is_dir():
         runtime = artefact / "runtime"
-        if (not (artefact / "LiteGitWorkbench.pyz").is_file() or not (runtime / "pythonw.exe").is_file()
-                or not (runtime / "Lib" / "os.py").is_file() or not any(runtime.glob("python*.dll"))
-                or not any(runtime.rglob("_tkinter.pyd")) or not any(runtime.rglob("init.tcl")) or not any(runtime.rglob("tk.tcl"))):
-            raise RuntimeError("The Windows directory bundle is missing its adjacent Python runtime")
+        required = {
+            "application_archive": (artefact / "LiteGitWorkbench.pyz").is_file(),
+            "official_interpreter": (runtime / "pythonw.exe").is_file(),
+            "standard_library": (runtime / "Lib" / "os.py").is_file(),
+            "python_dll": any(runtime.glob("python*.dll")),
+            "tkinter_extension": any(runtime.rglob("_tkinter*.pyd")),
+            "tcl_library": any(runtime.rglob("init.tcl")),
+            "tk_library": any(runtime.rglob("tk.tcl")),
+        }
+        if not all(required.values()):
+            missing = [name for name, present in required.items() if not present]
+            raise RuntimeError(f"The Windows directory bundle is missing its adjacent Python runtime components: {', '.join(missing)}")
     if system == "Linux" and header != b"\x7fELF":
         raise RuntimeError(f"Packaged executable has no ELF header: {header!r}")
     if system == "Darwin" and header not in {
@@ -264,6 +272,8 @@ def smoke_test(artefact: Path) -> dict[str, object]:
             raise RuntimeError("The directory bundle did not use its adjacent runtime")
         if result["repository_check"]["runtime"].get("packager") != "CPython launcher":
             raise RuntimeError("The Windows package did not use the standard CPython launcher")
+        if not all(result["repository_check"]["runtime"].get(name) is True for name in ("python_prefix_in_runtime", "standard_library_in_runtime", "tkinter_extension_in_runtime")):
+            raise RuntimeError("The application used Python files outside the bundled runtime")
         if result["repository_check"].get("interactions", {}).get("status") != "passed":
             raise RuntimeError("The packaged sidebar and retained-project interaction check did not pass")
     return result
