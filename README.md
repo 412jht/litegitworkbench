@@ -118,7 +118,7 @@ py -3 -m unittest discover -s tests -v
 
 The tests cover parsers, repository integration, isolated branch updates, dirty-work preservation, conflict recovery and editing, before/after previews, project switching, stale background responses, worktrees, push behaviour, commit-message rewriting, history state and the English-only repository policy.
 
-## Using the 2.1.0 workflows
+## Using the 2.1 workflows
 
 In **Branches**, select a local branch with an upstream and press **Update selected**. Branches checked out in another worktree must be updated from that worktree. The current branch uses a normal merge-based pull; Git will refuse to overwrite overlapping uncommitted changes. **Refresh branches** refreshes local Git information; use **Fetch** to refresh remote-tracking references from the server.
 

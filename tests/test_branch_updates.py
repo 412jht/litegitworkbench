@@ -349,6 +349,24 @@ class RepositoryTests(unittest.TestCase):
             self.assertEqual(["file.txt"], view._conflict_manager._selected()[3])
             error.assert_not_called()
 
+    def test_repository_smoke_opens_refreshes_and_reads_history_without_user_settings(self) -> None:
+        from litegit import repository_smoke_test
+
+        original = self.git("rev-parse", "HEAD")
+        with patch("litegit.load_settings") as load, patch("litegit.save_settings") as save:
+            try:
+                report = repository_smoke_test(self.repository)
+            except tk.TclError as exc:
+                self.skipTest(f"Tk is unavailable: {exc}")
+            load.assert_not_called()
+            save.assert_not_called()
+        self.assertEqual("passed", report["status"])
+        self.assertEqual(2, report["refreshes"])
+        self.assertIn(report["mode"], {"interface", "headless"})
+        self.assertEqual("main", report["branch"])
+        self.assertEqual(original, self.git("rev-parse", "HEAD"))
+        self.assertEqual("", self.git("status", "--porcelain"))
+
 
 class MergeAndDiffParserTests(unittest.TestCase):
     def test_diff3_regions_and_non_conflicting_context_are_preserved(self) -> None:

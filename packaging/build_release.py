@@ -18,7 +18,7 @@ from typing import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_POLICY_PATH = PROJECT_ROOT / ".litegit-local-policy.json"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 
 def normalised_architecture() -> str:
@@ -67,9 +67,9 @@ def sha256(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
-def run(command: list[str], *, cwd: Path = PROJECT_ROOT) -> None:
+def run(command: list[str], *, cwd: Path = PROJECT_ROOT, timeout: int | None = None) -> None:
     print("+", subprocess.list2cmdline(command), flush=True)
-    subprocess.run(command, cwd=cwd, check=True)
+    subprocess.run(command, cwd=cwd, check=True, timeout=timeout)
 
 
 def build(dist_dir: Path, work_dir: Path) -> Path:
@@ -135,11 +135,33 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
 def smoke_test(artefact: Path) -> dict[str, object]:
     executable = executable_inside(artefact)
     with tempfile.TemporaryDirectory(prefix="litegit-smoke-") as directory:
-        output = Path(directory) / "smoke.json"
-        run([str(executable), "--smoke-test", str(output)])
+        root = Path(directory)
+        repository = root / "repository"
+        repository.mkdir()
+        git = shutil.which("git")
+        if git is None:
+            raise RuntimeError("Git is required for the packaged repository smoke test")
+        hooks = root / "empty-hooks"
+        hooks.mkdir()
+        run([git, "-C", str(repository), "init", "-b", "main"])
+        run([
+            git, "-C", str(repository), "-c", "user.name=LiteGit Build",
+            "-c", "user.email=build@example.test", "-c", "commit.gpgsign=false",
+            "-c", f"core.hooksPath={hooks}", "commit", "--allow-empty", "-m", "Packaged repository smoke fixture",
+        ])
+        output = root / "smoke.json"
+        try:
+            run([str(executable), "--smoke-test", str(output), "--repository", str(repository)], timeout=180)
+        except subprocess.CalledProcessError as error:
+            if output.is_file():
+                diagnostic = json.loads(output.read_text(encoding="utf-8"))
+                raise RuntimeError(f"The packaged repository smoke test failed: {diagnostic}") from error
+            raise
         result = json.loads(output.read_text(encoding="utf-8"))
     if result.get("version") != VERSION or result.get("frozen") is not True:
         raise RuntimeError(f"Unexpected smoke-test result: {result}")
+    if result.get("repository_check", {}).get("status") != "passed":
+        raise RuntimeError(f"The packaged repository smoke test did not pass: {result}")
     return result
 
 

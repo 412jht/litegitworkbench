@@ -1,5 +1,13 @@
 # Release notes
 
+## 2.1.1
+
+- Isolate frozen Python DLL and shared-library search paths from external Git processes. Retain a private DLL directory for Python extensions while restoring the standard inherited Windows search path once, safely across concurrent refresh workers.
+- Resolve Git from PATH to an absolute executable and use the same runtime preparation for text commands, binary conflict contents and external folder launchers.
+- Preserve configured SSH, AskPass and commit-editor settings when cleaning bundled runtime paths.
+- Exercise repository opening, repeated refreshes and commit history in packaged smoke tests without reading or saving the user's project list. Verify the inherited Windows DLL search directory before and after the operation.
+- Address a runtime isolation defect identified during investigation of a Kaspersky behaviour alert. Vendor-specific antivirus classification still requires validation with protection enabled.
+
 ## 2.1.0
 
 - Identify main and linked worktrees correctly in Projects; show full names and paths on hover in expanded and collapsed sidebar modes.

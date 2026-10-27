@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import os
 import platform
-import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, Mapping, Sequence
 
 import tkinter as tk
@@ -42,13 +43,14 @@ from litegit_core import (
     stash_format,
 )
 from litegit_reword import main as reword_helper_main
+from litegit_process import external_environment, external_runtime_status, find_executable, launch_external, prepare_external_processes
 from litegit_diff import DirectoryPreview, FileVersions, read_file_versions
 from litegit_merge import BranchUpdateResult, unresolved_paths, update_branch
 from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip, bind_context_menu, context_row, popup_menu
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 
 def application_config_dir() -> Path:
@@ -1294,11 +1296,12 @@ class RepositoryView(ttk.Frame):
             return
         try:
             if os.name == "nt":
+                prepare_external_processes()
                 os.startfile(worktree.path)  # type: ignore[attr-defined]
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", worktree.path])
+                launch_external(["open", worktree.path])
             else:
-                subprocess.Popen(["xdg-open", worktree.path])
+                launch_external(["xdg-open", worktree.path])
         except OSError as exc:
             messagebox.showerror(APP_NAME, str(exc), parent=self)
 
@@ -1679,12 +1682,18 @@ class RepositoryView(ttk.Frame):
                     self.open_conflicts()
                     self.refresh_all()
                 else:
-                    messagebox.showerror(APP_NAME, safe_error, parent=self)
+                    if self.app.transient_mode:
+                        self.app.background_errors.append(safe_error)
+                    else:
+                        messagebox.showerror(APP_NAME, safe_error, parent=self)
             except Exception as exc:  # UI boundary: always report unexpected failures.
                 self.status_var.set(f"Failed: {exc}")
                 if on_error:
                     on_error(exc)
-                messagebox.showerror(APP_NAME, f"{type(exc).__name__}: {exc}", parent=self)
+                if self.app.transient_mode:
+                    self.app.background_errors.append(f"{type(exc).__name__}: {exc}")
+                else:
+                    messagebox.showerror(APP_NAME, f"{type(exc).__name__}: {exc}", parent=self)
             else:
                 self.status_var.set("Completed")
 
@@ -1742,13 +1751,15 @@ class RepositoryView(ttk.Frame):
 
 
 class LiteGitApp(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, *, transient: bool = False) -> None:
         super().__init__()
         self.title(f"{APP_NAME} {VERSION}")
         self.geometry("1500x900")
         self.minsize(1100, 680)
         self.option_add("*tearOff", False)
-        self.settings = load_settings()
+        self.transient_mode = transient
+        self.background_errors: list[str] = []
+        self.settings = {} if transient else load_settings()
         self.views: dict[str, RepositoryView] = {}
         self._all_views: set[RepositoryView] = set()
         saved = self.settings.get("projects", [])
@@ -1826,6 +1837,8 @@ class LiteGitApp(tk.Tk):
             self._project_key(Path(path)): str(self.project_main_paths[self._project_key(Path(path))])
             for path in self.project_paths if self._project_key(Path(path)) in self.project_main_paths
         }
+        if self.transient_mode:
+            return
         try:
             save_settings(self.settings)
         except OSError as exc:
@@ -2002,10 +2015,80 @@ class LiteGitApp(tk.Tk):
         self.destroy()
 
 
+def repository_smoke_test(repository: Path, *, refreshes: int = 2) -> dict[str, object]:
+    repository = discover_repository(repository)
+    executable = find_executable("git", external_environment())
+    if executable is None:
+        raise RuntimeError("Git was not found on PATH")
+    runtime = external_runtime_status()
+    if runtime.get("windows_dll_search_reset") is False:
+        raise RuntimeError("Git inherited the frozen application's DLL search directory")
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        for _ in range(refreshes):
+            state = RepositoryView._collect_repository_state(SimpleNamespace(repository=repository))
+            history = run_git(repository, ["log", "-1", "--format=%H"]).output.strip()
+        return {"status": "passed", "mode": "headless", "refreshes": refreshes, "head": history, "branch": state["branch"], "runtime": runtime}
+    app = LiteGitApp(transient=True)
+    app.withdraw()
+    result: dict[str, object] = {}
+    deadline = time.monotonic() + 120
+    completed = 0
+    app._activate_repository(repository)
+
+    def finish(error: str | None = None) -> None:
+        if error:
+            result["error"] = error
+        app._closing = True
+        for view in tuple(app._all_views):
+            view._close()
+        app.destroy()
+
+    def poll() -> None:
+        nonlocal completed
+        if app.background_errors:
+            finish("; ".join(app.background_errors))
+            return
+        if time.monotonic() >= deadline:
+            finish("The repository refresh smoke test timed out")
+            return
+        view = app.active_view
+        if any(item._busy_count for item in app._all_views):
+            app.after(30, poll)
+            return
+        if not view.commit_tree.get_children():
+            finish("The repository history did not load")
+            return
+        completed += 1
+        if completed < refreshes:
+            view.refresh_all()
+            app.after(30, poll)
+            return
+        checked_runtime = external_runtime_status()
+        if checked_runtime.get("windows_dll_search_reset") is False:
+            finish("The inherited DLL search directory changed during repository refresh")
+            return
+        result.update({
+            "status": "passed", "mode": "interface", "refreshes": completed,
+            "branch": view.summary_vars["branch"].get(), "head": view.summary_vars["head"].get(),
+            "history_rows": len(view.commit_tree.get_children()),
+            "git_executable_absolute": executable.is_absolute(),
+            "runtime": checked_runtime,
+        })
+        finish()
+
+    app.after(30, poll)
+    app.mainloop()
+    if "error" in result:
+        raise RuntimeError(str(result["error"]))
+    if result.get("status") != "passed":
+        raise RuntimeError("The repository smoke test closed before completion")
+    return result
+
+
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "--reword-helper":
         return reword_helper_main(sys.argv[2:])
-    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+    if len(sys.argv) in {3, 5} and sys.argv[1] == "--smoke-test":
         payload = {
             "app": APP_NAME,
             "version": VERSION,
@@ -2015,6 +2098,17 @@ def main() -> int:
             "python": platform.python_version(),
             "tk": str(tk.TkVersion),
         }
+        if len(sys.argv) == 5:
+            if sys.argv[3] != "--repository":
+                raise ValueError("Expected --repository <path> after the smoke-test output")
+            try:
+                payload["repository_check"] = repository_smoke_test(Path(sys.argv[4]))
+            except Exception as error:
+                payload["repository_check"] = {
+                    "status": "failed", "error": redact_text(f"{type(error).__name__}: {error}"),
+                }
+                Path(sys.argv[2]).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                return 1
         Path(sys.argv[2]).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return 0
     app = LiteGitApp()

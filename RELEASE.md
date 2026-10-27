@@ -1,4 +1,4 @@
-# LiteGit Workbench 2.1.0 release guide
+# LiteGit Workbench 2.1.1 release guide
 
 ## Release targets
 
@@ -17,6 +17,8 @@ Linux and macOS packages must be built natively on their matching operating syst
 ## Windows packaging and protection boundary
 
 The native Windows release uses PyInstaller to provide a single-file, windowed EXE. It is unsigned. Windows SmartScreen, AppLocker or Windows Defender Application Control may restrict it according to the destination machine's policy.
+
+Version 2.1.1 isolates the frozen runtime's library search paths before launching external Git commands. Python extension modules retain their private DLL directory, while Git inherits the standard Windows DLL search path and a PATH without bundled runtime directories. Git is launched by its absolute executable path. This addresses a runtime isolation defect; it does not constitute antivirus certification or guarantee that every security product will allow the unsigned executable. Keep protection enabled during verification.
 
 The portable Windows release uses the Python standard library's ZipApp format with ZIP compression. It contains no EXE, DLL, PyInstaller bootloader or native Python extension. After extraction, double-click `run-portable.cmd`; the launcher uses `py -3` when available and otherwise tries `python`.
 
@@ -47,7 +49,9 @@ python3 -m pip install -r packaging/requirements-build.txt
 python3 packaging/build_release.py --build-dir build/native
 ```
 
-The native builder creates and smoke-tests the matching Windows EXE, Linux ELF executable or macOS application bundle. On Windows, use `py -3` in place of `python3`; a local build policy may disable native packaging. Windows output includes a standalone EXE, its ZIP archive, metadata and SHA-256 values for both downloads. Unsigned and unnotarised macOS builds may be blocked by Gatekeeper on first launch. A Linux single-file build inherits the minimum glibc version of its build environment.
+The native builder creates and smoke-tests the matching Windows EXE, Linux ELF executable or macOS application bundle. It creates a disposable Git repository, then asks the packaged application to open it, refresh it twice and read commit history. The check uses a temporary in-memory project session and never loads or saves the user's project settings. Linux hosts without a display verify the same repository collection commands in headless mode; Windows and macOS exercise the interface event loop. The metadata records the mode and result.
+
+On Windows, use `py -3` in place of `python3`; a local build policy may disable native packaging. Windows output includes a standalone EXE, its ZIP archive, metadata and SHA-256 values for both downloads. Unsigned and unnotarised macOS builds may be blocked by Gatekeeper on first launch. A Linux single-file build inherits the minimum glibc version of its build environment.
 
 ## Automated builds and GitHub Releases
 
@@ -63,11 +67,12 @@ A manual workflow run keeps the packages as Actions artefacts. Pushing a `v*` ta
 ## Release verification checklist
 
 - The full test suite passes on every target.
-- The Windows ZipApp smoke test reports version `2.1.0` and `frozen: false`.
+- The Windows ZipApp smoke test reports version `2.1.1` and `frozen: false`.
 - The Windows portable archive contains `LiteGitWorkbench.pyz` and `run-portable.cmd`.
 - The Windows portable archive and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files.
 - The Windows native ZIP contains `LiteGitWorkbench.exe`, matching the standalone EXE byte for byte.
-- Windows, Linux and macOS frozen smoke tests report version `2.1.0` and `frozen: true`.
+- Windows, Linux and macOS frozen smoke tests report version `2.1.1` and `frozen: true`.
+- Packaged repository smoke tests complete opening, two refresh cycles and commit-history loading. Windows checks report an empty inherited DLL search directory before and after the refresh.
 - Native structural verification reports the expected PE, ELF or Mach-O header.
 - The repository text and Git commit messages contain ASCII-only British English.
 - No private-key marker, access token or personal absolute path appears in source or packaged bytes.

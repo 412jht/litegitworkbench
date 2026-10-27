@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from litegit_core import GitError, build_git_environment, parse_worktree_porcelain, run_git
+from litegit_core import GitError, parse_worktree_porcelain, run_git, run_git_bytes
 
 
 MAX_EDITOR_BYTES = 2 * 1024 * 1024
@@ -28,14 +26,7 @@ def _safe_file(repository: Path, path: str) -> Path:
 
 
 def _blob(repository: Path, object_id: str) -> bytes:
-    command = ["git", "-C", str(repository), "cat-file", "blob", object_id]
-    result = subprocess.run(
-        command, capture_output=True, env=build_git_environment(), timeout=180,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-    )
-    if result.returncode:
-        raise GitError(command, result.returncode, result.stderr.decode("utf-8", errors="replace"))
-    return result.stdout
+    return run_git_bytes(repository, ["cat-file", "blob", object_id])
 
 
 def _decode(data: bytes) -> str:

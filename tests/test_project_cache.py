@@ -37,6 +37,25 @@ class ProjectCacheTests(unittest.TestCase):
         self.assertTrue(restored["sidebar_collapsed"])
         self.assertEqual({project: project}, restored["project_main_paths"])
 
+    def test_transient_diagnostics_do_not_read_or_save_user_projects(self) -> None:
+        with (
+            patch("litegit.load_settings") as load,
+            patch("litegit.save_settings") as save,
+            patch.object(litegit.RepositoryView, "refresh_all"),
+        ):
+            try:
+                root = litegit.LiteGitApp(transient=True)
+            except tk.TclError as exc:
+                self.skipTest(f"Tk is unavailable: {exc}")
+            root.withdraw()
+            try:
+                root._activate_repository(self.directory)
+                self.assertEqual([str(self.directory)], root.project_paths)
+                load.assert_not_called()
+                save.assert_not_called()
+            finally:
+                root._close()
+
     def test_empty_local_cache_prevents_removed_projects_returning_from_global_settings(self) -> None:
         litegit._write_settings_json(self.global_file, {"projects": ["old"], "last_repository": "old", "history_limit": 250})
         litegit._write_settings_json(self.cache, {"projects": [], "last_repository": "", "version": 1})

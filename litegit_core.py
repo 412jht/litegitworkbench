@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from litegit_process import external_environment, find_executable, prepare_external_processes
+
 
 FIELD_SEPARATOR = "\x1f"
 
@@ -122,14 +124,15 @@ def redact_text(value: str) -> str:
     return value
 
 
-def run_git(
+def _git_process(
     repository: str | os.PathLike[str],
     arguments: Sequence[str],
     *,
     check: bool = True,
     timeout: int = 180,
     environment_overrides: Mapping[str, str] | None = None,
-) -> GitResult:
+    binary: bool = False,
+) -> tuple[tuple[str, ...], subprocess.CompletedProcess]:
     command = (
         "git",
         "-C",
@@ -144,40 +147,67 @@ def run_git(
     environment = build_git_environment()
     if environment_overrides:
         environment.update(environment_overrides)
+    environment = external_environment(environment)
     try:
+        executable = find_executable("git", environment)
+        if executable is None:
+            raise FileNotFoundError("Git was not found on PATH")
+        command = (str(executable), *command[1:])
+        prepare_external_processes()
+        text_options = {} if binary else {"text": True, "encoding": "utf-8", "errors": "replace"}
         process = subprocess.run(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            stderr=subprocess.PIPE if binary else subprocess.STDOUT,
             timeout=timeout,
             env=environment,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            **text_options,
         )
     except FileNotFoundError as exc:
         raise GitError(command, 127, "Git was not found. Install Git and ensure that git is available on PATH.") from exc
     except subprocess.TimeoutExpired as exc:
-        output = exc.stdout if isinstance(exc.stdout, str) else ""
+        output = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
         raise GitError(command, 124, f"The Git command exceeded {timeout} seconds.\n{output}") from exc
+    except OSError as exc:
+        raise GitError(command, 126, f"The external Git runtime could not be prepared: {exc}") from exc
+    if check and process.returncode:
+        output = process.stderr.decode("utf-8", errors="replace") if binary else process.stdout
+        raise GitError(command, process.returncode, output)
+    return command, process
+
+
+def run_git(
+    repository: str | os.PathLike[str],
+    arguments: Sequence[str],
+    *,
+    check: bool = True,
+    timeout: int = 180,
+    environment_overrides: Mapping[str, str] | None = None,
+) -> GitResult:
+    command, process = _git_process(
+        repository, arguments, check=check, timeout=timeout, environment_overrides=environment_overrides,
+    )
     result = GitResult(command, process.returncode, process.stdout)
-    if check and result.returncode:
-        raise GitError(result.command, result.returncode, result.output)
     return result
 
 
-def find_git_askpass() -> Path | None:
-    configured = os.environ.get("GIT_ASKPASS") or os.environ.get("SSH_ASKPASS")
+def run_git_bytes(repository: str | os.PathLike[str], arguments: Sequence[str]) -> bytes:
+    _command, process = _git_process(repository, arguments, binary=True)
+    return process.stdout
+
+
+def find_git_askpass(environment: Mapping[str, str] | None = None) -> Path | None:
+    environment = external_environment(environment)
+    configured = environment.get("GIT_ASKPASS") or environment.get("SSH_ASKPASS")
     if configured and Path(configured).is_file():
         return Path(configured)
-    git_path = shutil.which("git")
-    if not git_path:
+    executable = find_executable("git", environment)
+    if executable is None:
         return None
-    executable = Path(git_path).resolve()
     candidates = (
-        Path(shutil.which("git-askpass") or ""),
-        Path(shutil.which("ssh-askpass") or ""),
+        Path(shutil.which("git-askpass", path=environment.get("PATH")) or ""),
+        Path(shutil.which("ssh-askpass", path=environment.get("PATH")) or ""),
         executable.parent / "git-askpass.exe",
         executable.parent.parent / "mingw64" / "bin" / "git-askpass.exe",
         executable.parent.parent / "mingw64" / "libexec" / "git-core" / "git-gui--askpass",
@@ -191,7 +221,7 @@ def build_git_environment(
     *,
     askpass_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, str]:
-    environment = dict(os.environ if base is None else base)
+    environment = external_environment(base)
     environment.update(
         {
             "GIT_TERMINAL_PROMPT": "0",
@@ -200,7 +230,7 @@ def build_git_environment(
             "LANG": "C.UTF-8",
         }
     )
-    askpass = Path(askpass_path) if askpass_path else find_git_askpass()
+    askpass = Path(askpass_path) if askpass_path else find_git_askpass(environment)
     if askpass and askpass.is_file():
         for variable in ("GIT_ASKPASS", "SSH_ASKPASS"):
             configured = environment.get(variable, "")

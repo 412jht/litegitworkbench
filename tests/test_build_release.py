@@ -10,6 +10,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import litegit
+
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "packaging" / "build_release.py"
 SPEC = importlib.util.spec_from_file_location("litegit_build_release", MODULE_PATH)
@@ -52,6 +54,18 @@ class LocalBuildPolicyTests(unittest.TestCase):
 
 
 class WindowsNativeReleaseTests(unittest.TestCase):
+    def test_windowed_smoke_failure_writes_a_diagnostic_before_returning_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "smoke.json"
+            with (
+                mock.patch.object(litegit.sys, "argv", ["LiteGitWorkbench", "--smoke-test", str(output), "--repository", directory]),
+                mock.patch.object(litegit, "repository_smoke_test", side_effect=RuntimeError("Repository refresh failed")),
+            ):
+                self.assertEqual(1, litegit.main())
+            result = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual("failed", result["repository_check"]["status"])
+            self.assertEqual("RuntimeError: Repository refresh failed", result["repository_check"]["error"])
+
     def test_windows_downloads_preserve_the_same_executable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -63,7 +77,7 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 mock.patch.object(BUILD_RELEASE, "normalised_architecture", return_value="x86_64"),
             ):
                 archive = BUILD_RELEASE.package(artefact, root / "release")
-            self.assertEqual("LiteGitWorkbench-2.1.0-windows-x86_64.zip", archive.name)
+            self.assertEqual(f"LiteGitWorkbench-{BUILD_RELEASE.VERSION}-windows-x86_64.zip", archive.name)
             self.assertEqual(content, archive.with_suffix(".exe").read_bytes())
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(content, bundle.read("LiteGitWorkbench.exe"))
@@ -80,9 +94,9 @@ class WindowsNativeReleaseTests(unittest.TestCase):
             release = root / "release"
             release.mkdir()
             checksum_path = release / "SHA256SUMS.txt"
-            portable_checksum = f"{'A' * 64}  LiteGitWorkbench-2.1.0-windows-portable.zip"
-            stale_exe = f"{'0' * 64}  LiteGitWorkbench-2.1.0-windows-x86_64.exe"
-            stale_zip = f"{'0' * 64}  LiteGitWorkbench-2.1.0-windows-x86_64.zip"
+            portable_checksum = f"{'A' * 64}  LiteGitWorkbench-{BUILD_RELEASE.VERSION}-windows-portable.zip"
+            stale_exe = f"{'0' * 64}  LiteGitWorkbench-{BUILD_RELEASE.VERSION}-windows-x86_64.exe"
+            stale_zip = f"{'0' * 64}  LiteGitWorkbench-{BUILD_RELEASE.VERSION}-windows-x86_64.zip"
             checksum_path.write_text(
                 "\n".join((portable_checksum, stale_exe, stale_zip)) + "\n",
                 encoding="ascii",
@@ -93,7 +107,7 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 mock.patch.object(BUILD_RELEASE, "load_local_policy", return_value={}),
                 mock.patch.object(BUILD_RELEASE, "build", return_value=artefact),
                 mock.patch.object(BUILD_RELEASE, "verify_artefact_structure", return_value={"status": "passed"}),
-                mock.patch.object(BUILD_RELEASE, "smoke_test", return_value={"version": "2.1.0", "frozen": True}),
+                mock.patch.object(BUILD_RELEASE, "smoke_test", return_value={"version": BUILD_RELEASE.VERSION, "frozen": True}),
                 mock.patch.object(
                     BUILD_RELEASE.sys,
                     "argv",
@@ -102,7 +116,7 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(0, BUILD_RELEASE.main())
-            archive = release / "LiteGitWorkbench-2.1.0-windows-x86_64.zip"
+            archive = release / f"LiteGitWorkbench-{BUILD_RELEASE.VERSION}-windows-x86_64.zip"
             executable = archive.with_suffix(".exe")
             metadata = json.loads(archive.with_suffix(".zip.json").read_text(encoding="utf-8"))
             self.assertEqual(BUILD_RELEASE.sha256(archive), metadata["sha256"])
