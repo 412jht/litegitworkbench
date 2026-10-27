@@ -157,7 +157,10 @@ class ProjectAndEditorTests(unittest.TestCase):
             view.status_entries.reverse()
             view._render_changes()
             self.assertEqual("0", view.change_tree.selection()[0])
-            process_events(self.root)
+            delivered: list[bool] = []
+            self.root.after_idle(lambda: delivered.append(True))
+            self.pump(lambda: bool(delivered))
+        self.assertEqual(0, view._busy_count)
 
     def conflict(self, working: str) -> ConflictFile:
         return ConflictFile(self.first, "file.txt", "stages", "base\n", "left\n", "right\n", working.encode("utf-8"))
