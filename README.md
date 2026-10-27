@@ -24,13 +24,13 @@ macOS or Linux:
 
 ## Downloadable releases
 
-- Windows x64: download the standalone EXE and double-click it, or extract the native ZIP and run `LiteGitWorkbench.exe`. Git must already be available; Python and Tk/Tcl are included.
+- Windows x64: extract the complete native ZIP and run `LiteGitWorkbench.exe`. Keep its adjacent `_internal` directory in place; the EXE cannot run on its own. Git must already be available; Python and Tk/Tcl are included.
 - Windows portable: download the portable ZIP, extract it and double-click `run-portable.cmd`. An administrator-approved Python 3.10+ installation with Tkinter and Git must already be available.
 - Linux x64: extract `LiteGitWorkbench`, grant execute permission and run it.
 - macOS Intel: extract and open `LiteGit Workbench.app`.
 - macOS Apple Silicon: extract and open `LiteGit Workbench.app`.
 
-Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
+Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows portable package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
 
 ## Features
 
@@ -41,6 +41,7 @@ Version tags publish these packages as downloadable GitHub Release assets, not m
 - Add a Git directory and switch back instantly without recreating its interface.
 - Preserve each open project's tabs, filters, selections, comparisons, console and commit draft during switching.
 - Keep cached project switches responsive while settings save in the background and large file previews load in batches.
+- Retain inactive project views without resizing them when the sidebar changes width.
 - Remember the project list, sidebar state and most recently opened repository across restarts.
 - Show just the project name for the main worktree and `worktree-name / main-project` for linked worktrees.
 - Hover over project names or collapsed numbered shortcuts to see the complete name and absolute path.
@@ -131,7 +132,7 @@ Use **+ Add Git directory...** in the left sidebar to add another project. Click
 
 Projects use the main worktree name alone, for example `project`, and linked worktrees use `project-task / project`. Hovering reveals the full name and path in both sidebar modes. Use **Remove from Projects** or the project row's context menu to remove an entry. The Git directory and pending operations remain available; adding the directory again restores its in-memory session while the window is open.
 
-The project list is cached in `.litegit-projects.json` in the current running directory. The one-click launchers first change into their application directory, so source and portable launches keep the cache beside the application. Existing user settings are imported when no valid local cache exists. An empty local project list is respected after removals, and the cache is written atomically. Runtime project caches are excluded from Git.
+The project list is cached in `.litegit-projects.json` in the current running directory. The one-click launchers first change into their application directory, so source and portable launches keep the cache beside the application. Existing user settings are imported when no valid local cache exists. An empty local project list is respected after removals, and the cache is written atomically. Windows sharing and access errors are retried on the settings worker. If the local cache remains unavailable, the latest snapshot is saved under the user's application settings in a separate `project-caches` file for each running directory. The next launch uses the newer valid local or backup snapshot. If both locations fail, the previous files and current window remain available and the error is reported. Runtime project caches are excluded from Git.
 
 The Branches toolbar groups branch management, integration and tracking actions across the page. Local changes keeps its file actions on the left and the Compare controls at the top of the right pane. Branch, project and commit context menus also support Shift+F10 on a selected row; macOS supports Control-click.
 

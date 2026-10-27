@@ -1,5 +1,12 @@
 # Release notes
 
+## 2.1.3
+
+- Package Windows native builds as a directory bundle with `LiteGitWorkbench.exe` and an adjacent `_internal` runtime. Extract the complete ZIP; the EXE requires these files. Remove single-file runtime extraction and retain DLL search isolation for external Git commands. Antivirus classification still requires validation with protection enabled.
+- Map only the active repository view and retain inactive views without participating in sidebar resize layouts. Position the active view directly beside the sidebar, removing cascading host-frame layouts. Reuse existing project rows when expanding or collapsing Projects; preserve project drafts, tabs and selections.
+- Retry Windows cache replacement errors after closing the temporary snapshot. If the running-directory cache remains unavailable, save a separate backup in user settings for that running directory. Restore the newest valid snapshot and preserve previous files if both locations fail.
+- Verify directory bundle structure, adjacent runtime use, real Windows file sharing contention and mapped sidebar layouts in regression checks.
+
 ## 2.1.2
 
 - Switch between retained repository views by raising the existing frame. Keep layouts, tabs, filters, selections, scroll positions and commit drafts in place; initialise the shared theme once per window.

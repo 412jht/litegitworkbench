@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import ctypes
+import os
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
@@ -29,7 +32,8 @@ class ProjectCacheTests(unittest.TestCase):
         litegit.save_settings(settings)
         stored = json.loads(self.cache.read_text(encoding="utf-8"))
         self.assertEqual([project], stored["projects"])
-        self.assertEqual(1, stored["version"])
+        self.assertEqual(2, stored["version"])
+        self.assertGreater(stored["saved_at_ns"], 0)
         self.assertNotIn("history_limit", stored)
         self.global_file.unlink()
         restored = litegit.load_settings()
@@ -114,6 +118,109 @@ class ProjectCacheTests(unittest.TestCase):
         self.assertEqual([str(main)], litegit.load_settings()["projects"])
         self.assertEqual(str(main), litegit.load_settings()["last_repository"])
         self.assertTrue(worktree.is_dir())
+
+    def test_transient_windows_replace_denials_retry_the_same_snapshot(self) -> None:
+        original_replace = Path.replace
+        attempts = []
+
+        def replace(source, target):
+            if target == self.cache:
+                attempts.append(source)
+                if len(attempts) < 3:
+                    error = PermissionError("A reader temporarily prevents replacement")
+                    error.winerror = 5
+                    raise error
+            return original_replace(source, target)
+
+        with patch.object(Path, "replace", replace), patch("litegit.time.sleep") as sleep:
+            litegit.save_settings({"projects": ["latest"]})
+        self.assertEqual(3, len(attempts))
+        self.assertEqual(1, len(set(attempts)))
+        self.assertEqual(2, sleep.call_count)
+        self.assertEqual(["latest"], litegit.load_settings()["projects"])
+        self.assertFalse(litegit.project_cache_fallback_file().exists())
+
+    def test_locked_local_cache_uses_a_newer_user_copy_and_recovers_after_unlock(self) -> None:
+        litegit.save_settings({"projects": ["original"]})
+        previous = self.cache.read_bytes()
+        original_replace = Path.replace
+
+        def replace(source, target):
+            if target == self.cache:
+                error = PermissionError("The local cache remains locked")
+                error.winerror = 32
+                raise error
+            return original_replace(source, target)
+
+        with patch.object(Path, "replace", replace), patch("litegit.time.sleep"):
+            litegit.save_settings({"projects": ["latest"], "last_repository": "latest"})
+        self.assertEqual(previous, self.cache.read_bytes())
+        self.assertTrue(litegit.project_cache_fallback_file().is_file())
+        self.assertEqual(["latest"], litegit.load_settings()["projects"])
+        litegit.save_settings({"projects": ["recovered"], "last_repository": "recovered"})
+        self.assertEqual(["recovered"], litegit.load_settings()["projects"])
+        self.assertEqual("recovered", litegit.load_settings()["last_repository"])
+
+    def test_fallback_copies_are_scoped_to_the_running_directory(self) -> None:
+        first_fallback = litegit.project_cache_fallback_file()
+        litegit._write_settings_json(first_fallback, {"projects": ["first-window"], "saved_at_ns": time.time_ns()})
+        second_cache = self.directory / "another-run" / ".litegit-projects.json"
+        litegit._write_settings_json(second_cache, {"version": 1, "projects": []})
+        with patch("litegit.PROJECT_CACHE_FILE", second_cache):
+            self.assertNotEqual(first_fallback, litegit.project_cache_fallback_file())
+            self.assertEqual([], litegit.load_settings()["projects"])
+        self.assertEqual(["first-window"], litegit.load_settings()["projects"])
+
+    def test_newer_legacy_local_cache_takes_precedence_over_an_old_fallback(self) -> None:
+        fallback = litegit.project_cache_fallback_file()
+        litegit._write_settings_json(fallback, {"projects": ["old-backup"], "saved_at_ns": 1})
+        litegit._write_settings_json(self.cache, {"version": 1, "projects": []})
+        self.assertEqual([], litegit.load_settings()["projects"])
+
+    def test_both_storage_failures_preserve_the_previous_copies(self) -> None:
+        litegit.save_settings({"projects": ["original"]})
+        fallback = litegit.project_cache_fallback_file()
+        litegit._write_settings_json(fallback, {"projects": ["older-backup"], "saved_at_ns": 1})
+        previous, backup = self.cache.read_bytes(), fallback.read_bytes()
+        error = PermissionError("Both cache locations are unavailable")
+        error.winerror = 5
+        with patch.object(Path, "replace", side_effect=error), patch("litegit.time.sleep"):
+            with self.assertRaises(PermissionError):
+                litegit.save_settings({"projects": ["unsaved"]})
+        self.assertEqual(previous, self.cache.read_bytes())
+        self.assertEqual(backup, fallback.read_bytes())
+        self.assertEqual([], list(self.directory.rglob("*.tmp")))
+
+    @unittest.skipUnless(os.name == "nt", "Windows file-sharing semantics are required")
+    def test_a_real_windows_reader_without_delete_sharing_can_release_during_retry(self) -> None:
+        litegit.save_settings({"projects": ["original"]})
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        create = kernel.CreateFileW
+        create.argtypes = [ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
+        create.restype = ctypes.c_void_p
+        close = kernel.CloseHandle
+        close.argtypes = [ctypes.c_void_p]
+        close.restype = ctypes.c_int
+        handle = create(str(self.cache), 0x80000000, 3, None, 3, 0x80, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        released = threading.Event()
+
+        def release():
+            close(handle)
+            released.set()
+
+        timer = threading.Timer(0.15, release)
+        timer.start()
+        try:
+            litegit.save_settings({"projects": ["after-reader-release"]})
+        finally:
+            timer.cancel()
+            timer.join()
+            if not released.is_set():
+                close(handle)
+        self.assertEqual(["after-reader-release"], litegit.load_settings()["projects"])
+        self.assertFalse(litegit.project_cache_fallback_file().exists())
 
 
 if __name__ == "__main__":

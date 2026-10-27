@@ -74,6 +74,14 @@ class ExternalProcessTests(unittest.TestCase):
         self.assertEqual(self.git, litegit_process.find_executable("git", {"PATH": str(self.system)}))
         self.assertIsNone(litegit_process.find_executable("git", {"PATH": str(self.bundle)}))
 
+    def test_runtime_status_distinguishes_adjacent_libraries_from_a_temporary_bundle(self) -> None:
+        self.frozen()
+        with mock.patch.object(litegit_process.sys, "platform", "linux"):
+            with mock.patch.object(litegit_process.sys, "executable", str(self.root / "LiteGitWorkbench.exe")):
+                self.assertTrue(litegit_process.external_runtime_status()["bundle_in_application_directory"])
+            with mock.patch.object(litegit_process.sys, "executable", str(self.root / "other-folder" / "LiteGitWorkbench.exe")):
+                self.assertFalse(litegit_process.external_runtime_status()["bundle_in_application_directory"])
+
     def test_concurrent_windows_launches_initialise_the_dll_search_once(self) -> None:
         self.frozen()
         handle = mock.Mock()

@@ -70,7 +70,7 @@ class SwitchingResponsivenessTests(unittest.TestCase):
             insert.assert_not_called()
             delete.assert_not_called()
         self.assertIs(first, self.root.active_view)
-        self.assertEqual("grid", first.winfo_manager())
+        self.assertEqual("place", first.winfo_manager())
         self.assertEqual(2, first.notebook.index(first.notebook.select()))
         self.assertEqual("Keep the first draft", first.commit_message_var.get())
         self.assertEqual(("0",), self.root.project_tree.selection())
@@ -104,6 +104,34 @@ class SwitchingResponsivenessTests(unittest.TestCase):
             self.root.open_repository(str(self.projects[0]))
             focus.assert_called_once_with()
         self.assertIs(second_entry, second._last_focus)
+
+    def test_sidebar_resize_keeps_inactive_projects_unmapped_and_reuses_rows(self) -> None:
+        first = self.root.views[self.root._project_key(self.projects[0])]
+        first.commit_message_var.set("Retain the hidden draft")
+        self.root.attributes("-alpha", 0.0)
+        self.root.deiconify()
+        self.pump(lambda: self.root.active_view.winfo_ismapped() and not first.winfo_ismapped())
+        process_events(self.root)
+        events = []
+        first.bind("<Configure>", lambda event: events.append(event), add="+")
+        original_selection = self.root.project_tree.selection()
+        with patch.object(self.root.project_tree, "insert") as insert, patch.object(self.root.project_tree, "delete") as delete:
+            for _ in range(6):
+                self.root.toggle_sidebar()
+                expected = int(self.root.sidebar.cget("width"))
+                self.pump(lambda: self.root.sidebar.winfo_width() == expected and self.root.active_view.winfo_width() == self.root.winfo_width() - expected)
+                self.assertEqual(expected, self.root.active_view.winfo_x())
+            insert.assert_not_called()
+            delete.assert_not_called()
+        self.assertEqual([], events)
+        self.assertEqual(original_selection, self.root.project_tree.selection())
+        self.assertEqual("Retain the hidden draft", first.commit_message_var.get())
+        self.root.open_repository(str(self.projects[0]))
+        self.pump(lambda: first.winfo_ismapped())
+        self.assertEqual(1, sum(bool(view.winfo_ismapped()) for view in self.root._all_views))
+        self.root.geometry("1280x760")
+        self.pump(lambda: self.root.winfo_width() == 1280 and first.winfo_width() == 1280 - self.root.sidebar.winfo_width())
+        self.assertEqual(self.root.winfo_height(), first.winfo_height())
 
     def test_slow_settings_storage_does_not_block_switching_or_interface_events(self) -> None:
         entered, release = threading.Event(), threading.Event()

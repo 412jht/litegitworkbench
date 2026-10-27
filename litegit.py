@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import gc
+import hashlib
 import json
 import os
 import platform
@@ -51,7 +53,7 @@ from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 
 
 def application_config_dir() -> Path:
@@ -66,6 +68,7 @@ CONFIG_DIR = application_config_dir()
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 PROJECT_CACHE_FILE = Path.cwd() / ".litegit-projects.json"
 PROJECT_CACHE_FIELDS = ("projects", "last_repository", "sidebar_collapsed", "project_main_paths")
+SETTINGS_RETRY_DELAYS = (0.02, 0.04, 0.08, 0.16, 0.32, 0.64)
 
 
 def _editor_argument(value: str | os.PathLike[str]) -> str:
@@ -101,11 +104,45 @@ def _read_settings_json(path: Path) -> dict[str, object]:
 def load_settings() -> dict[str, object]:
     settings = _read_settings_json(CONFIG_FILE)
     cache = _read_settings_json(PROJECT_CACHE_FILE)
+    fallback_path = project_cache_fallback_file()
+    fallback = _read_settings_json(fallback_path)
+    if isinstance(fallback.get("projects"), list) and (
+        not isinstance(cache.get("projects"), list)
+        or _cache_saved_at(fallback_path, fallback) > _cache_saved_at(PROJECT_CACHE_FILE, cache)
+    ):
+        cache = fallback
     if isinstance(cache.get("projects"), list):
         for field in PROJECT_CACHE_FIELDS:
             settings.pop(field, None)
         settings.update({field: cache[field] for field in PROJECT_CACHE_FIELDS if field in cache})
     return settings
+
+
+def project_cache_fallback_file() -> Path:
+    scope = os.path.normcase(os.path.abspath(PROJECT_CACHE_FILE))
+    name = hashlib.sha256(scope.encode("utf-8")).hexdigest() + ".json"
+    return CONFIG_FILE.parent / "project-caches" / name
+
+
+def _cache_saved_at(path: Path, cache: dict[str, object]) -> int:
+    saved_at = cache.get("saved_at_ns")
+    if isinstance(saved_at, int) and not isinstance(saved_at, bool) and saved_at > 0:
+        return saved_at
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _replace_settings_file(temporary: Path, path: Path) -> None:
+    for attempt in range(len(SETTINGS_RETRY_DELAYS) + 1):
+        try:
+            temporary.replace(path)
+            return
+        except OSError as error:
+            if getattr(error, "winerror", None) not in {5, 32, 33} or attempt == len(SETTINGS_RETRY_DELAYS):
+                raise
+            time.sleep(SETTINGS_RETRY_DELAYS[attempt])
 
 
 def _write_settings_json(path: Path, settings: dict[str, object]) -> None:
@@ -115,17 +152,27 @@ def _write_settings_json(path: Path, settings: dict[str, object]) -> None:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
             temporary = Path(stream.name)
             json.dump(settings, stream, ensure_ascii=False, indent=2)
-        temporary.replace(path)
+        _replace_settings_file(temporary, path)
     finally:
         if temporary is not None:
-            temporary.unlink(missing_ok=True)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass  # An external reader must not mask the original save result.
 
 
 def save_settings(settings: dict[str, object]) -> None:
     cache = {field: settings[field] for field in PROJECT_CACHE_FIELDS if field in settings}
     cache.setdefault("projects", [])
-    cache["version"] = 1
-    _write_settings_json(PROJECT_CACHE_FILE, cache)
+    cache["version"] = 2
+    cache["saved_at_ns"] = time.time_ns()
+    try:
+        _write_settings_json(PROJECT_CACHE_FILE, cache)
+    except OSError as local_error:
+        try:
+            _write_settings_json(project_cache_fallback_file(), cache)
+        except OSError as fallback_error:
+            raise local_error from fallback_error
     try:
         _write_settings_json(CONFIG_FILE, settings)
     except OSError:
@@ -193,7 +240,7 @@ class CommitMessageDialog(tk.Toplevel):
 
 class RepositoryView(ttk.Frame):
     def __init__(self, app: LiteGitApp) -> None:
-        super().__init__(app.content)
+        super().__init__(app)
         self.app = app
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="litegit")
         self.repository: Path | None = None
@@ -1759,6 +1806,8 @@ class RepositoryView(ttk.Frame):
 
 class LiteGitApp(tk.Tk):
     def __init__(self, *, transient: bool = False) -> None:
+        # Dispose of earlier closed Tk interpreters on the interface thread.
+        gc.collect()
         super().__init__()
         self.title(f"{APP_NAME} {VERSION}")
         self.geometry("1500x900")
@@ -1794,14 +1843,11 @@ class LiteGitApp(tk.Tk):
         self._suppress_project_selection = False
         self._project_menu_path: str | None = None
         self._project_rows: dict[str, str] = {}
+        self._sidebar_rendered_collapsed: bool | None = None
         self._build_project_sidebar()
-        self.content = ttk.Frame(self)
-        self.content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.content.rowconfigure(0, weight=1)
-        self.content.columnconfigure(0, weight=1)
         self.active_view = self._new_view()
         self._empty_view = self.active_view
-        self.active_view.tkraise()
+        self._place_active_view()
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.bind("<F5>", lambda _event: self.active_view.refresh_all())
         self.bind("<Control-o>", lambda _event: self.active_view.choose_repository())
@@ -1815,7 +1861,7 @@ class LiteGitApp(tk.Tk):
 
     def _build_project_sidebar(self) -> None:
         self.sidebar = ttk.Frame(self, padding=(4, 8), width=240)
-        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        self.sidebar.place(x=0, y=0, width=240, relheight=1)
         self.sidebar.pack_propagate(False)
         header = ttk.Frame(self.sidebar)
         header.pack(fill=tk.X)
@@ -1847,8 +1893,11 @@ class LiteGitApp(tk.Tk):
     def _new_view(self) -> RepositoryView:
         view = RepositoryView(self)
         self._all_views.add(view)
-        view.grid(row=0, column=0, sticky="nsew")
         return view
+
+    def _place_active_view(self) -> None:
+        width = 56 if self.sidebar_collapsed else 240
+        self.active_view.place(x=width, y=0, relwidth=1, width=-width, relheight=1)
 
     def _save_project_state(self) -> None:
         self.settings["projects"] = list(self.project_paths)
@@ -1984,10 +2033,11 @@ class LiteGitApp(tk.Tk):
             if remaining is not None:
                 self._activate_repository(remaining.repository)
             else:
+                self.active_view.place_forget()
                 if self._empty_view.repository is not None:
                     self._empty_view = self._new_view()
                 self.active_view = self._empty_view
-                self.active_view.tkraise()
+                self._place_active_view()
                 self.settings["last_repository"] = ""
                 self.title(f"{APP_NAME} {VERSION}")
                 if self.project_paths:
@@ -2000,25 +2050,42 @@ class LiteGitApp(tk.Tk):
         self._save_project_state()
         self._render_projects()
 
-    def _render_projects(self) -> None:
-        self.project_tooltip.hide()
+    def _update_sidebar_layout(self) -> None:
+        if self._sidebar_rendered_collapsed == self.sidebar_collapsed:
+            return
+        self._sidebar_rendered_collapsed = self.sidebar_collapsed
         self.sidebar.configure(width=56 if self.sidebar_collapsed else 240)
+        self.sidebar.place_configure(width=56 if self.sidebar_collapsed else 240)
+        self._place_active_view()
         self.collapse_button.configure(text=">" if self.sidebar_collapsed else "<")
         self.add_project_button.configure(text="+" if self.sidebar_collapsed else "+ Add Git directory...")
-        self.remove_project_button.configure(text="-" if self.sidebar_collapsed else "Remove from Projects", state=tk.NORMAL if self.project_paths else tk.DISABLED)
+        self.remove_project_button.configure(text="-" if self.sidebar_collapsed else "Remove from Projects")
         if self.sidebar_collapsed:
             self.project_label.pack_forget()
             self.project_hint.pack_forget()
         else:
             self.project_label.pack(side=tk.LEFT)
             self.project_hint.pack(fill=tk.X, pady=8)
-        self.project_tree.delete(*self.project_tree.get_children())
+
+    def _render_projects(self) -> None:
+        self.project_tooltip.hide()
+        self._update_sidebar_layout()
+        self.remove_project_button.configure(state=tk.NORMAL if self.project_paths else tk.DISABLED)
+        desired_rows = {str(index) for index in range(len(self.project_paths))}
+        obsolete = [row for row in self.project_tree.get_children() if row not in desired_rows]
+        if obsolete:
+            self.project_tree.delete(*obsolete)
         self._project_rows = {}
         for index, path in enumerate(self.project_paths):
             repository = Path(path)
             label = f"{index + 1:02d}" if self.sidebar_collapsed else self._project_name(path)
-            self.project_tree.insert("", tk.END, iid=str(index), text=label)
-            self._project_rows[self._project_key(repository)] = str(index)
+            row = str(index)
+            if self.project_tree.exists(row):
+                if self.project_tree.item(row, "text") != label:
+                    self.project_tree.item(row, text=label)
+            else:
+                self.project_tree.insert("", tk.END, iid=row, text=label)
+            self._project_rows[self._project_key(repository)] = row
         self._select_active_project()
 
     def _select_active_project(self) -> None:
@@ -2069,8 +2136,10 @@ class LiteGitApp(tk.Tk):
         restore_focus = focused is not None and str(focused).startswith(str(previous) + ".")
         if restore_focus:
             previous._last_focus = focused
+        if previous is not view:
+            previous.place_forget()
         self.active_view = view
-        view.tkraise()
+        self._place_active_view()
         if restore_focus:
             target = getattr(view, "_last_focus", None)
             (target if target is not None and target.winfo_exists() else view).focus_set()

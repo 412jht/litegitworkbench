@@ -85,7 +85,10 @@ def find_executable(name: str, environment: Mapping[str, str]) -> Path | None:
 
 def external_runtime_status() -> dict[str, object]:
     status: dict[str, object] = {"frozen": bool(getattr(sys, "frozen", False))}
-    if sys.platform == "win32" and _bundle_directory() is not None:
+    bundle = _bundle_directory()
+    if bundle is not None:
+        status["bundle_in_application_directory"] = bundle.is_relative_to(Path(sys.executable).resolve().parent)
+    if sys.platform == "win32" and bundle is not None:
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         query = kernel.GetDllDirectoryW
         query.argtypes = [ctypes.c_uint, ctypes.c_wchar_p]

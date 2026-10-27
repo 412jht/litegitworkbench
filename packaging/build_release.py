@@ -18,7 +18,7 @@ from typing import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_POLICY_PATH = PROJECT_ROOT / ".litegit-local-policy.json"
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 
 
 def normalised_architecture() -> str:
@@ -89,7 +89,7 @@ def build(dist_dir: Path, work_dir: Path) -> Path:
     )
     system = platform.system()
     if system == "Windows":
-        return dist_dir / "LiteGitWorkbench.exe"
+        return dist_dir / "LiteGitWorkbench"
     if system == "Darwin":
         return dist_dir / "LiteGit Workbench.app"
     return dist_dir / "LiteGitWorkbench"
@@ -98,6 +98,8 @@ def build(dist_dir: Path, work_dir: Path) -> Path:
 def executable_inside(artefact: Path) -> Path:
     if artefact.suffix == ".app":
         return artefact / "Contents" / "MacOS" / "LiteGitWorkbench"
+    if artefact.is_dir() and platform.system() == "Windows":
+        return artefact / "LiteGitWorkbench.exe"
     return artefact
 
 
@@ -106,13 +108,18 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
     if not executable.is_file():
         raise FileNotFoundError(executable)
     size = executable.stat().st_size
-    if size < 1024 * 1024:
+    minimum_size = 64 * 1024 if platform.system() == "Windows" and artefact.is_dir() else 1024 * 1024
+    if size < minimum_size:
         raise RuntimeError(f"Packaged executable is unexpectedly small: {size} bytes")
     with executable.open("rb") as stream:
         header = stream.read(4)
     system = platform.system()
     if system == "Windows" and not header.startswith(b"MZ"):
         raise RuntimeError(f"Packaged executable has no PE header: {header!r}")
+    if system == "Windows" and artefact.is_dir():
+        runtime = artefact / "_internal"
+        if not runtime.is_dir() or not (runtime / "base_library.zip").is_file() or not any(runtime.glob("python*.dll")):
+            raise RuntimeError("The Windows directory bundle is missing its adjacent Python runtime")
     if system == "Linux" and header != b"\x7fELF":
         raise RuntimeError(f"Packaged executable has no ELF header: {header!r}")
     if system == "Darwin" and header not in {
@@ -162,6 +169,9 @@ def smoke_test(artefact: Path) -> dict[str, object]:
         raise RuntimeError(f"Unexpected smoke-test result: {result}")
     if result.get("repository_check", {}).get("status") != "passed":
         raise RuntimeError(f"The packaged repository smoke test did not pass: {result}")
+    if platform.system() == "Windows" and artefact.is_dir():
+        if result["repository_check"]["runtime"].get("bundle_in_application_directory") is not True:
+            raise RuntimeError("The directory bundle did not use its adjacent runtime")
     return result
 
 
@@ -172,12 +182,20 @@ def package(artefact: Path, release_dir: Path) -> Path:
     release_dir.mkdir(parents=True, exist_ok=True)
     if platform.system() == "Windows":
         archive = release_dir / f"{base_name}.zip"
+        if artefact.is_dir() and archive.with_suffix(".exe").exists():
+            raise RuntimeError("A standalone EXE remains in the output directory. Use a clean output directory for the directory bundle.")
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
-            bundle.write(artefact, "LiteGitWorkbench.exe")
+            if artefact.is_dir():
+                for path in sorted(artefact.rglob("*")):
+                    if path.is_file():
+                        bundle.write(path, path.relative_to(artefact).as_posix())
+            else:
+                bundle.write(artefact, "LiteGitWorkbench.exe")
             bundle.write(PROJECT_ROOT / "README.md", "README.md")
             bundle.write(PROJECT_ROOT / "RELEASE.md", "RELEASE.md")
             bundle.write(PROJECT_ROOT / "CHANGELOG.md", "CHANGELOG.md")
-        shutil.copy2(artefact, archive.with_suffix(".exe"))
+        if artefact.is_file():
+            shutil.copy2(artefact, archive.with_suffix(".exe"))
         return archive
     archive = release_dir / f"{base_name}.tar.gz"
     with tarfile.open(archive, "w:gz", compresslevel=9) as bundle:
@@ -230,6 +248,7 @@ def main() -> int:
     archive = package(artefact, arguments.output_dir.resolve())
     checksum = sha256(archive)
     checksums = {archive.name: checksum}
+    windows_directory_bundle = platform.system() == "Windows" and artefact.is_dir()
     metadata = {
         "app": "LiteGit Workbench",
         "version": VERSION,
@@ -237,13 +256,22 @@ def main() -> int:
         "platform": platform.system(),
         "architecture": normalised_architecture(),
         "python": platform.python_version(),
-        "packager": "PyInstaller single-file bootloader",
+        "packager": "PyInstaller directory bundle" if windows_directory_bundle else "PyInstaller single-file bootloader",
         "archive": archive.name,
         "sha256": checksum,
         "structural_verification": structure,
         "runtime_smoke_test": smoke,
     }
-    if platform.system() == "Windows":
+    if windows_directory_bundle:
+        executable = executable_inside(artefact)
+        metadata["executable"] = {
+            "file": executable.relative_to(artefact).as_posix(),
+            "sha256": sha256(executable),
+            "runtime_directory": "_internal",
+            "standalone": False,
+            "code_signing": "unsigned",
+        }
+    elif platform.system() == "Windows":
         executable = archive.with_suffix(".exe")
         executable_checksum = sha256(executable)
         checksums[executable.name] = executable_checksum
@@ -255,12 +283,15 @@ def main() -> int:
     metadata_path = archive.with_suffix(archive.suffix + ".json")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     checksum_path = arguments.output_dir.resolve() / "SHA256SUMS.txt"
+    replaced_names = set(checksums)
+    if windows_directory_bundle:
+        replaced_names.add(archive.with_suffix(".exe").name)
     existing = []
     if checksum_path.exists():
         existing = [
             line
             for line in checksum_path.read_text(encoding="utf-8").splitlines()
-            if not any(line.endswith(f"  {filename}") for filename in checksums)
+            if not any(line.endswith(f"  {filename}") for filename in replaced_names)
         ]
     existing.extend(f"{value}  {filename}" for filename, value in checksums.items())
     checksum_path.write_text("\n".join(sorted(existing)) + "\n", encoding="utf-8", newline="\n")
