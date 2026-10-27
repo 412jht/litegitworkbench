@@ -46,7 +46,7 @@ class ExternalProcessTests(unittest.TestCase):
 
     def test_compiled_runtime_is_recognised_without_inventing_pyinstaller_attributes(self) -> None:
         with (
-            mock.patch.dict(litegit_process.__dict__, {"__compiled__": SimpleNamespace(containing_dir=str(self.bundle))}),
+            mock.patch.dict(litegit_process.__dict__, {"__compiled__": SimpleNamespace(containing_dir=str(self.bundle.parent), python_runtime_dir=str(self.bundle))}),
             mock.patch.object(litegit_process.sys, "platform", "linux"),
             mock.patch.object(litegit_process.sys, "frozen", False, create=True),
             mock.patch.object(litegit_process.sys, "executable", str(self.bundle / "LiteGitWorkbench.exe")),

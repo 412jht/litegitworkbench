@@ -21,7 +21,7 @@ def is_packaged_application() -> bool:
 def _bundle_directory() -> Path | None:
     compiled = globals().get("__compiled__")
     if compiled is not None:
-        return Path(compiled.containing_dir).resolve()
+        return Path(compiled.python_runtime_dir).resolve()
     directory = getattr(sys, "_MEIPASS", None)
     return Path(directory).resolve() if getattr(sys, "frozen", False) and directory else None
 
