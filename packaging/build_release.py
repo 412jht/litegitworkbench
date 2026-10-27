@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -18,7 +19,7 @@ from typing import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_POLICY_PATH = PROJECT_ROOT / ".litegit-local-policy.json"
-VERSION = "2.1.4"
+VERSION = "2.1.5"
 
 
 def normalised_architecture() -> str:
@@ -72,22 +73,80 @@ def run(command: list[str], *, cwd: Path = PROJECT_ROOT, timeout: int | None = N
     subprocess.run(command, cwd=cwd, check=True, timeout=timeout)
 
 
+def verify_windows_runtime_signatures(paths: list[Path]) -> list[dict[str, str]]:
+    command = (
+        "$ErrorActionPreference = 'Stop'; "
+        "$results = @(foreach ($file in (ConvertFrom-Json $env:LITEGIT_RUNTIME_FILES)) { "
+        "$signature = Get-AuthenticodeSignature -LiteralPath $file; "
+        "@{file=(Split-Path -Leaf $file); status=[string]$signature.Status; "
+        "signer=$signature.SignerCertificate.Subject; thumbprint=$signature.SignerCertificate.Thumbprint} "
+        "}); ConvertTo-Json -InputObject $results -Compress"
+    )
+    result = subprocess.run(
+        [shutil.which("pwsh") or "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        env=dict(os.environ, LITEGIT_RUNTIME_FILES=json.dumps([str(path) for path in paths])),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, timeout=90,
+    )
+    signatures = json.loads(result.stdout)
+    for signature in signatures:
+        if signature["status"] != "Valid" or "Python Software Foundation" not in (signature["signer"] or ""):
+            raise RuntimeError(f"The official Python runtime signature could not be verified: {signature['file']} ({signature['status']})")
+    if len(signatures) != len(paths) or {signature["file"] for signature in signatures} != {path.name for path in paths}:
+        raise RuntimeError("The Python runtime signature report is incomplete")
+    return signatures
+
+
+def copy_windows_runtime(source: Path, destination: Path) -> dict[str, object]:
+    destination.mkdir(parents=True, exist_ok=True)
+    signed_names = ("python.exe", "pythonw.exe", "python3.dll", f"python{sys.version_info.major}{sys.version_info.minor}.dll")
+    names = [*signed_names, "LICENSE.txt", *(path.name for path in source.glob("vcruntime*.dll"))]
+    files = {}
+    for name in names:
+        shutil.copy2(source / name, destination / name)
+        original, copied = sha256(source / name), sha256(destination / name)
+        if original != copied:
+            raise RuntimeError(f"The bundled Python runtime was modified during copying: {name}")
+        files[name] = copied
+    ignored = shutil.ignore_patterns("__pycache__", "*.pyc", "site-packages", "test", "tests", "ensurepip", "idle_test", "turtledemo")
+    for name in ("DLLs", "Lib", "tcl"):
+        shutil.copytree(source / name, destination / name, ignore=ignored)
+    return {
+        "implementation": "Unmodified official CPython interpreter and standard library",
+        "version": platform.python_version(),
+        "files": files,
+        "authenticode": verify_windows_runtime_signatures([destination / name for name in signed_names]),
+    }
+
+
+def build_windows_launcher(dist_dir: Path, work_dir: Path) -> Path:
+    artefact = dist_dir / "LiteGitWorkbench.dist"
+    artefact.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    runtime = copy_windows_runtime(Path(sys.base_prefix), artefact / "runtime")
+    (artefact / "runtime-verification.json").write_text(json.dumps(runtime, indent=2), encoding="utf-8")
+    specification = importlib.util.spec_from_file_location("litegit_portable_archive", PROJECT_ROOT / "packaging" / "build_windows_portable.py")
+    if specification is None or specification.loader is None:
+        raise RuntimeError("The application archive builder could not be loaded")
+    portable = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(portable)
+    archive = portable.build_zipapp(work_dir / "application")
+    shutil.copy2(archive, artefact / "LiteGitWorkbench.pyz")
+    resource = work_dir / "windows_launcher.res"
+    run(["rc.exe", "/nologo", "/fo", str(resource), str(PROJECT_ROOT / "packaging" / "windows_launcher.rc")])
+    run([
+        "cl.exe", "/nologo", "/W4", "/WX", "/O2", "/MT", "/DUNICODE", "/D_UNICODE",
+        str(PROJECT_ROOT / "packaging" / "windows_launcher.c"), str(resource),
+        f"/Fo{work_dir / 'windows_launcher.obj'}", f"/Fe{artefact / 'LiteGitWorkbench.exe'}",
+        "user32.lib", "shell32.lib", "/link", "/SUBSYSTEM:WINDOWS", "/MANIFEST:EMBED",
+        f"/MANIFESTINPUT:{PROJECT_ROOT / 'packaging' / 'windows_launcher.manifest'}",
+        "/DYNAMICBASE", "/NXCOMPAT", "/HIGHENTROPYVA",
+    ])
+    return artefact
+
+
 def build(dist_dir: Path, work_dir: Path) -> Path:
     if platform.system() == "Windows":
-        dist_dir.mkdir(parents=True, exist_ok=True)
-        work_dir.mkdir(parents=True, exist_ok=True)
-        run([
-            sys.executable, "-m", "nuitka", "--standalone", "--enable-plugin=tk-inter",
-            "--windows-console-mode=disable", "--msvc=latest", "--assume-yes-for-downloads",
-            "--jobs=4", "--lto=no", f"--output-dir={dist_dir}",
-            "--output-folder-name=LiteGitWorkbench.dist", "--output-filename=LiteGitWorkbench.exe",
-            f"--report={work_dir / 'nuitka-report.xml'}",
-            "--company-name=LiteGit Workbench contributors", "--product-name=LiteGit Workbench",
-            "--file-description=Lightweight cross-platform Git workbench",
-            f"--file-version={VERSION}.0", f"--product-version={VERSION}.0",
-            str(PROJECT_ROOT / "litegit.py"),
-        ])
-        return dist_dir / "LiteGitWorkbench.dist"
+        return build_windows_launcher(dist_dir, work_dir)
     run(
         [
             sys.executable,
@@ -121,7 +180,7 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
     if not executable.is_file():
         raise FileNotFoundError(executable)
     size = executable.stat().st_size
-    minimum_size = 64 * 1024 if platform.system() == "Windows" and artefact.is_dir() else 1024 * 1024
+    minimum_size = 16 * 1024 if platform.system() == "Windows" and artefact.is_dir() else 1024 * 1024
     if size < minimum_size:
         raise RuntimeError(f"Packaged executable is unexpectedly small: {size} bytes")
     with executable.open("rb") as stream:
@@ -130,7 +189,10 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
     if system == "Windows" and not header.startswith(b"MZ"):
         raise RuntimeError(f"Packaged executable has no PE header: {header!r}")
     if system == "Windows" and artefact.is_dir():
-        if not any(artefact.glob("python*.dll")) or not any(artefact.rglob("_tkinter.pyd")) or not any(artefact.rglob("init.tcl")) or not any(artefact.rglob("tk.tcl")):
+        runtime = artefact / "runtime"
+        if (not (artefact / "LiteGitWorkbench.pyz").is_file() or not (runtime / "pythonw.exe").is_file()
+                or not (runtime / "Lib" / "os.py").is_file() or not any(runtime.glob("python*.dll"))
+                or not any(runtime.rglob("_tkinter.pyd")) or not any(runtime.rglob("init.tcl")) or not any(runtime.rglob("tk.tcl"))):
             raise RuntimeError("The Windows directory bundle is missing its adjacent Python runtime")
     if system == "Linux" and header != b"\x7fELF":
         raise RuntimeError(f"Packaged executable has no ELF header: {header!r}")
@@ -153,30 +215,46 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
 
 def smoke_test(artefact: Path) -> dict[str, object]:
     executable = executable_inside(artefact)
-    with tempfile.TemporaryDirectory(prefix="litegit-smoke-") as directory:
+    with tempfile.TemporaryDirectory(prefix="litegit packaged smoke ") as directory:
         root = Path(directory)
         repository = root / "repository"
-        repository.mkdir()
+        repositories = [repository]
+        if platform.system() == "Windows" and artefact.is_dir():
+            repositories.append(root / "alternate repository")
         git = shutil.which("git")
         if git is None:
             raise RuntimeError("Git is required for the packaged repository smoke test")
         hooks = root / "empty-hooks"
         hooks.mkdir()
-        run([git, "-C", str(repository), "init", "-b", "main"])
-        run([
-            git, "-C", str(repository), "-c", "user.name=LiteGit Build",
-            "-c", "user.email=build@example.test", "-c", "commit.gpgsign=false",
-            "-c", f"core.hooksPath={hooks}", "commit", "--allow-empty", "-m", "Packaged repository smoke fixture",
-        ])
+        for item in repositories:
+            item.mkdir()
+            run([git, "-C", str(item), "init", "-b", "main"])
+            run([
+                git, "-C", str(item), "-c", "user.name=LiteGit Build",
+                "-c", "user.email=build@example.test", "-c", "commit.gpgsign=false",
+                "-c", f"core.hooksPath={hooks}", "commit", "--allow-empty", "-m", "Packaged repository smoke fixture",
+            ])
         output = root / "smoke.json"
+        command = [str(executable), "--smoke-test", str(output), "--repository", str(repository)]
+        if len(repositories) > 1:
+            command.extend(["--alternate-repository", str(repositories[1])])
         try:
-            run([str(executable), "--smoke-test", str(output), "--repository", str(repository)], timeout=180)
+            run(command, timeout=180)
         except subprocess.CalledProcessError as error:
             if output.is_file():
                 diagnostic = json.loads(output.read_text(encoding="utf-8"))
                 raise RuntimeError(f"The packaged repository smoke test failed: {diagnostic}") from error
             raise
         result = json.loads(output.read_text(encoding="utf-8"))
+        if platform.system() == "Windows" and artefact.is_dir():
+            failed_output = root / "failed smoke result.json"
+            failed = subprocess.run(
+                [str(executable), "--smoke-test", str(failed_output), "--repository", str(root / "missing repository")],
+                check=False, timeout=60,
+            )
+            if failed.returncode != 1 or json.loads(failed_output.read_text(encoding="utf-8"))["repository_check"]["status"] != "failed":
+                raise RuntimeError("The native launcher did not preserve the failed application's exit status")
+            result["failure_exit_status"] = failed.returncode
     if result.get("version") != VERSION or result.get("frozen") is not True:
         raise RuntimeError(f"Unexpected smoke-test result: {result}")
     if result.get("repository_check", {}).get("status") != "passed":
@@ -184,8 +262,10 @@ def smoke_test(artefact: Path) -> dict[str, object]:
     if platform.system() == "Windows" and artefact.is_dir():
         if result["repository_check"]["runtime"].get("bundle_in_application_directory") is not True:
             raise RuntimeError("The directory bundle did not use its adjacent runtime")
-        if result["repository_check"]["runtime"].get("packager") != "Nuitka":
-            raise RuntimeError("The Windows package did not use the configured standalone compiler")
+        if result["repository_check"]["runtime"].get("packager") != "CPython launcher":
+            raise RuntimeError("The Windows package did not use the standard CPython launcher")
+        if result["repository_check"].get("interactions", {}).get("status") != "passed":
+            raise RuntimeError("The packaged sidebar and retained-project interaction check did not pass")
     return result
 
 
@@ -193,7 +273,7 @@ def smoke_test_reword_helper(artefact: Path) -> dict[str, str]:
     executable = executable_inside(artefact)
     with tempfile.TemporaryDirectory(prefix="litegit-helper-smoke-") as directory:
         root = Path(directory)
-        sequence, message = root / "sequence.txt", root / "message.txt"
+        sequence, message = root / "sequence \u03b1 file.txt", root / "message \u03b1 file.txt"
         sequence.write_text("pick abc123 Original\n", encoding="ascii")
         message.write_text("Original\n", encoding="ascii")
         environment = dict(os.environ, LITEGIT_REWORD_TARGET="abc123", LITEGIT_REWORD_MESSAGE="Updated helper smoke message")
@@ -287,7 +367,7 @@ def main() -> int:
         "platform": platform.system(),
         "architecture": normalised_architecture(),
         "python": platform.python_version(),
-        "packager": "Nuitka standalone directory" if windows_directory_bundle else "PyInstaller single-file bootloader",
+        "packager": "MSVC launcher with official CPython runtime" if windows_directory_bundle else "PyInstaller single-file bootloader",
         "archive": archive.name,
         "sha256": checksum,
         "structural_verification": structure,
@@ -298,11 +378,12 @@ def main() -> int:
         metadata["executable"] = {
             "file": executable.relative_to(artefact).as_posix(),
             "sha256": sha256(executable),
-            "runtime_directory": ".",
+            "runtime_directory": "runtime",
             "standalone": False,
             "code_signing": "unsigned",
         }
-        metadata["compiler"] = {"name": "Nuitka", "version": "4.3.1", "toolchain": "MSVC"}
+        metadata["compiler"] = {"name": "MSVC", "language": "C", "runtime": "static"}
+        metadata["python_runtime"] = json.loads((artefact / "runtime-verification.json").read_text(encoding="utf-8"))
     elif platform.system() == "Windows":
         executable = archive.with_suffix(".exe")
         executable_checksum = sha256(executable)

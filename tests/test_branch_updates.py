@@ -353,9 +353,11 @@ class RepositoryTests(unittest.TestCase):
         from litegit import repository_smoke_test
 
         original = self.git("rev-parse", "HEAD")
+        alternate = self.root / "alternate repository"
+        subprocess.run(["git", "clone", "--local", str(self.repository), str(alternate)], check=True, capture_output=True)
         with patch("litegit.load_settings") as load, patch("litegit.save_settings") as save:
             try:
-                report = repository_smoke_test(self.repository)
+                report = repository_smoke_test(self.repository, alternate_repository=alternate)
             except tk.TclError as exc:
                 self.skipTest(f"Tk is unavailable: {exc}")
             load.assert_not_called()
@@ -364,6 +366,11 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(2, report["refreshes"])
         self.assertIn(report["mode"], {"interface", "headless"})
         self.assertEqual("main", report["branch"])
+        if report["mode"] == "interface":
+            self.assertEqual("passed", report["interactions"]["status"])
+            self.assertEqual(20, report["interactions"]["sidebar_toggles"])
+            self.assertEqual(20, report["interactions"]["project_switches"])
+            self.assertTrue(report["interactions"]["drafts_preserved"])
         self.assertEqual(original, self.git("rev-parse", "HEAD"))
         self.assertEqual("", self.git("status", "--porcelain"))
 

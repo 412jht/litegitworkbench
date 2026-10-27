@@ -59,6 +59,51 @@ class ExternalProcessTests(unittest.TestCase):
             self.assertIn("--reword-helper sequence", environment["GIT_SEQUENCE_EDITOR"])
             self.assertNotIn("litegit.py", environment["GIT_SEQUENCE_EDITOR"])
 
+    def test_native_launcher_keeps_standard_python_and_reinvokes_the_application_exe(self) -> None:
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        launcher = self.root / "LiteGitWorkbench.exe"
+        launcher.touch()
+        launcher.with_suffix(".pyz").touch()
+        with (
+            mock.patch.dict(os.environ, {"LITEGIT_NATIVE_LAUNCHER": str(launcher)}),
+            mock.patch.object(litegit_process.sys, "executable", str(runtime / "pythonw.exe")),
+            mock.patch.object(litegit_process.sys, "frozen", False, create=True),
+            mock.patch.object(litegit_process.os, "add_dll_directory", create=True) as add,
+            mock.patch.object(litegit_process.ctypes, "WinDLL", create=True) as library,
+        ):
+            self.assertTrue(litegit_process.is_packaged_application())
+            self.assertEqual(runtime, litegit_process._bundle_directory())
+            litegit_process.prepare_external_processes()
+            add.assert_not_called()
+            library.assert_not_called()
+            cleaned = litegit_process.external_environment({
+                "LITEGIT_NATIVE_LAUNCHER": str(launcher),
+                "PATH": os.pathsep.join((str(runtime), str(self.system))),
+                "TCL_LIBRARY": str(runtime / "tcl"),
+                "GIT_SSH_COMMAND": "configured-ssh",
+            })
+            self.assertEqual(str(self.system), cleaned["PATH"])
+            self.assertNotIn("TCL_LIBRARY", cleaned)
+            self.assertNotIn("LITEGIT_NATIVE_LAUNCHER", cleaned)
+            self.assertEqual("configured-ssh", cleaned["GIT_SSH_COMMAND"])
+            environment = litegit.build_reword_environment("abc123", "Updated message")
+            self.assertIn(str(launcher).replace("\\", "/"), environment["GIT_SEQUENCE_EDITOR"])
+            self.assertNotIn("pythonw.exe", environment["GIT_SEQUENCE_EDITOR"])
+            self.assertIn("--reword-helper message", environment["GIT_EDITOR"])
+
+    def test_native_launcher_marker_cannot_redirect_an_unrelated_interpreter(self) -> None:
+        launcher = self.root / "LiteGitWorkbench.exe"
+        launcher.touch()
+        launcher.with_suffix(".pyz").touch()
+        with (
+            mock.patch.dict(os.environ, {"LITEGIT_NATIVE_LAUNCHER": str(launcher)}),
+            mock.patch.object(litegit_process.sys, "executable", str(self.root / "other-runtime" / "pythonw.exe")),
+            mock.patch.object(litegit_process.sys, "frozen", False, create=True),
+        ):
+            self.assertIsNone(litegit_process.native_launcher())
+            self.assertFalse(litegit_process.is_packaged_application())
+
     def test_bundle_paths_are_removed_without_removing_neighbours_or_authentication(self) -> None:
         self.frozen()
         neighbour = self.root / "bundle-neighbour"

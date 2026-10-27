@@ -1,34 +1,38 @@
-# LiteGit Workbench 2.1.4 release guide
+# LiteGit Workbench 2.1.5 release guide
 
 ## Current validation status
 
-Version 2.1.4 is an unpublished test candidate. Use the Python portable package for current Windows testing. On 27 October 2026, the affected user confirmed that expanding/collapsing Projects and manually selecting a project work with this package. The user has observed no Kaspersky alerts from script launches. Other Git workflows still require their normal acceptance checks.
+Version 2.1.5 is an unpublished EXE test candidate. The Windows package uses a native MSVC launcher and an adjacent official CPython runtime. Double-clicking the EXE starts the application without requiring a separate Python installation. Release acceptance requires the candidate's automated checks and validation on the affected machine.
 
-The native 2.1.4 candidate became unresponsive during a sidebar check. Read-only inspection found suspended threads; the source of suspension remains unknown. The hang does not establish a new Kaspersky detection. Native EXE compatibility remains unresolved and has not been accepted for publication.
+On 27 October 2026, the affected user confirmed that expanding/collapsing Projects and manually selecting a project work with the 2.1.4 Python package, and clarified that script launches have never raised a Kaspersky alert. The native Nuitka 2.1.4 candidate became unresponsive during a sidebar check. Read-only inspection found suspended threads; the source remains unknown. The hang does not establish a new Kaspersky detection. This history supports testing ordinary CPython execution through a native EXE launcher; it does not establish antivirus clearance for the new candidate.
 
 ## Release targets
 
 | Target | Package | Recommended minimum |
 |---|---|---|
-| Windows x64 | ZIP containing `LiteGitWorkbench.exe` and all adjacent runtime files and directories | Windows 10 22H2 or Windows 11; Git |
+| Windows x64 | ZIP containing the native `LiteGitWorkbench.exe` launcher, `LiteGitWorkbench.pyz` and the complete `runtime` directory | Windows 10 22H2 or Windows 11; Git |
 | Windows portable | `LiteGitWorkbench.pyz` and `run-portable.cmd` in a ZIP archive | Windows 10 22H2 or Windows 11; Python 3.10+ with Tkinter; Git |
 | Linux x64 | Single-file ELF executable in a `tar.gz` archive | Ubuntu 22.04 or another glibc 2.35+ distribution |
 | macOS Intel | `LiteGit Workbench.app` in a `tar.gz` archive | macOS 11 or later |
 | macOS Apple Silicon | `LiteGit Workbench.app` in a `tar.gz` archive | macOS 11 or later |
 
-The Windows native package includes Python and Tk/Tcl beside the compiled executable. Extract the entire ZIP into one directory and run `LiteGitWorkbench.exe`; copying the EXE alone is insufficient. The separate portable package is architecture-neutral Python source packaging and uses the destination machine's administrator-approved Python and Tk runtime. Git remains an external requirement on every platform so the application can use the operator's existing credentials, SSH configuration and Git version.
+The Windows native package includes the official Python interpreter, standard library and Tk/Tcl. Extract the entire ZIP into one directory and run `LiteGitWorkbench.exe`; copying the EXE alone is insufficient. The separate portable package is architecture-neutral Python source packaging and uses the destination machine's installed Python and Tk runtime. Git remains an external requirement on every platform so the application can use the operator's existing credentials, SSH configuration and Git version.
 
 Linux and macOS packages must be built natively on their matching operating system and processor architecture. They include Python and Tk/Tcl.
 
 ## Windows packaging and protection boundary
 
-The native Windows package uses Nuitka 4.3.1 with MSVC to compile a standalone directory application. It does not use PyInstaller, a single-file extractor or UPX. Linux and macOS continue to use PyInstaller. The Windows EXE is unsigned. Windows SmartScreen, AppLocker or Windows Defender Application Control may restrict it according to the destination machine's policy.
+The native Windows entry point is a small C launcher compiled with MSVC and a static C runtime. It uses `CreateProcessW` to run `runtime\pythonw.exe -I -B LiteGitWorkbench.pyz`, forwards Unicode arguments using Windows quoting rules, waits for the application and returns its exit status. It runs with the invoking user's privileges, does not invoke a command shell and does not extract a runtime at startup. Application modules run as ordinary Python. Linux and macOS continue to use PyInstaller.
+
+The Windows build copies the official CPython interpreter without renaming or modifying it, verifies matching file hashes, and checks Python Software Foundation Authenticode signatures for `python.exe`, `pythonw.exe`, `python3.dll` and the versioned Python DLL. The standard library, extension modules and Tcl/Tk data are included; build-machine third-party site packages and cached bytecode are excluded. `runtime-verification.json` records the runtime hashes and signature results. The native launcher itself is unsigned; verified runtime signatures do not sign the launcher or certify antivirus compatibility. Windows policy may restrict it.
 
 Version 2.1.1 isolates the frozen runtime's library search paths before launching external Git commands. Python extension modules retain their private DLL directory, while Git inherits the standard Windows DLL search path and a PATH without bundled runtime directories. Git is launched by its absolute executable path. This addresses a runtime isolation defect; it does not constitute antivirus certification or guarantee that every security product will allow the unsigned executable. Keep protection enabled during verification.
 
-Kaspersky reported the 2.1.2 test EXE through behaviour and memory inspection, and also reported the 2.1.3 PyInstaller directory EXE at startup. Their hashes match the recorded build artefacts. These observations do not establish a false-positive diagnosis or identify a precise trigger. Version 2.1.4 changes the Windows compiler and adds local phase diagnostics; its native compatibility investigation remains open. Automated build and smoke-test success does not establish antivirus clearance.
+Kaspersky reported the 2.1.2 test EXE through behaviour and memory inspection, and also reported the 2.1.3 PyInstaller directory EXE at startup. Their hashes match the recorded build artefacts. These observations do not establish a false-positive diagnosis or identify a precise trigger. Version 2.1.4 changed the Windows compiler to Nuitka, and 2.1.5 tests an ordinary CPython process behind a native launcher. Automated build and smoke-test success does not establish antivirus clearance.
 
 Use `start-without-restore.cmd`, or the `--no-restore` argument, to open the interface without automatically opening the last repository or querying worktree labels. Saved project shortcuts remain available. Native Windows startup phases are written once per process under `%LOCALAPPDATA%\LiteGitWorkbench\diagnostics`; `LITEGIT_STARTUP_LOG` selects an explicit path. Phases distinguish Python entry, Tk creation, settings loading, interface construction, window mapping, repository selection and external Git preparation/launch/completion. Logs contain no repository path, command argument or credential, and are not uploaded. Missing log output cannot by itself prove that the runtime was the detection trigger.
+
+The native launcher also records entry, runtime readiness, the child process identifier and its exit status in a separate local phase log. It never pauses, resumes or injects into another process. External Git processes do not inherit the internal launcher marker or bundled runtime environment paths. Commit editor helpers re-enter through the application EXE.
 
 The portable Windows release uses the Python standard library's ZipApp format with ZIP compression. It contains no EXE, DLL, PyInstaller bootloader or native Python extension. After extraction, double-click `run-portable.cmd` for daily use and automatic restoration of the last project. The launcher uses `py -3` when available and otherwise tries `python`, forwarding arguments and the application's exit status. The portable `start-without-restore.cmd` enables a local phase log and waits for manual project selection. Starting in this diagnostic mode retains saved project shortcuts and leaves the normal launcher's restoration behaviour unchanged.
 
@@ -59,15 +63,15 @@ python3 -m pip install -r packaging/requirements-build.txt
 python3 packaging/build_release.py --build-dir build/native
 ```
 
-The native builder creates and smoke-tests the matching Windows EXE, Linux ELF executable or macOS application bundle. It creates a disposable Git repository, then asks the packaged application to open it, refresh it twice and read commit history. It also verifies the packaged commit editor's sequence and message helper contracts against temporary text fixtures. The check uses a temporary in-memory project session and never loads or saves the user's project settings. Linux hosts without a display verify the same repository collection commands in headless mode; Windows and macOS exercise the interface event loop. The metadata records the mode and result.
+The native builder creates and smoke-tests the matching Windows launcher bundle, Linux ELF executable or macOS application bundle. It creates a disposable Git repository, then asks the packaged application to open it, refresh it twice and read commit history. The Windows EXE check adds a second disposable repository, maps a transparent window, performs 20 sidebar toggles and 20 project switches, and verifies retained views and drafts through widget state without image capture. It checks failure exit propagation and both commit editor helper contracts with spaces and Unicode in their file paths. The check uses temporary in-memory project sessions and never loads or saves the user's project settings. Linux hosts without a display verify the repository collection commands in headless mode. The metadata records the mode and result.
 
-On Windows, use `py -3` in place of `python3`; a local build policy may disable native packaging. Windows output includes the complete native ZIP, metadata and its SHA-256 value. Metadata also records the bundled EXE hash and explicitly states that it requires the adjacent runtime. The packaged smoke test verifies that the runtime is inside the application directory. Unsigned and unnotarised macOS builds may be blocked by Gatekeeper on first launch. A Linux single-file build inherits the minimum glibc version of its build environment.
+On Windows, use `packaging\build-windows-native.cmd` with MSVC x64 and the Windows SDK; the wrapper finds the installed Visual Studio toolchain. A local build policy may require GitHub Actions packaging instead. Windows output includes the complete native ZIP, metadata and its SHA-256 value. Metadata records the launcher hash and the official interpreter signatures, and states that the launcher requires the adjacent archive and runtime. Unsigned and unnotarised macOS builds may be blocked by Gatekeeper on first launch. A Linux single-file build inherits the minimum glibc version of its build environment.
 
 ## Automated builds and GitHub Releases
 
 `.github/workflows/build-native-releases.yml` tests and builds four targets:
 
-- `windows-latest` creates a native x64 directory bundle in a ZIP and the separate portable ZIP;
+- `windows-latest` uses Python 3.14 and MSVC to create a native x64 launcher/runtime ZIP and the separate portable ZIP;
 - `ubuntu-22.04` creates the Linux x64 native archive;
 - `macos-15-intel` creates the macOS Intel native archive;
 - `macos-15` creates the macOS Apple Silicon native archive.
@@ -77,14 +81,15 @@ A manual workflow run keeps the packages as Actions artefacts. Pushing a `v*` ta
 ## Release verification checklist
 
 - The full test suite passes on every target.
-- The Windows ZipApp smoke test reports version `2.1.4` and `frozen: false`.
+- The Windows ZipApp smoke test reports version `2.1.5` and `frozen: false`.
 - The Windows portable archive contains `LiteGitWorkbench.pyz`, `run-portable.cmd` and its Python `start-without-restore.cmd` diagnostic launcher.
 - The extracted Windows portable launcher forwards paths containing spaces and returns the actual application exit status on success and failure.
 - The Windows portable archive and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files.
-- The Windows native ZIP contains `LiteGitWorkbench.exe`, Python DLLs, the Tkinter extension, Tcl/Tk data and the remaining runtime files. No standalone EXE download is advertised. Its runtime reports `packager: Nuitka` and its metadata identifies the compiler and toolchain.
-- Windows, Linux and macOS packaged smoke tests report version `2.1.4` and `frozen: true`. This field means a native packaged application, including Nuitka builds that do not set `sys.frozen`.
+- The Windows native ZIP contains `LiteGitWorkbench.exe`, `LiteGitWorkbench.pyz` and the official interpreter, standard library, Tkinter extension and Tcl/Tk data under `runtime`. No standalone EXE download is advertised. Its runtime reports `packager: CPython launcher` and its metadata identifies MSVC, runtime hashes and valid Python Software Foundation signatures.
+- Windows, Linux and macOS packaged smoke tests report version `2.1.5` and `frozen: true`. This field identifies a native packaged application; the standard interpreter retains its normal `sys.frozen` state.
 - Packaged repository smoke tests complete opening, two refresh cycles and commit-history loading. Windows checks report an empty inherited DLL search directory before and after the refresh.
 - Packaged sequence and message editor helpers produce the exact expected text; source filenames are not used to relaunch a compiled executable.
+- The Windows EXE passes 20 mapped sidebar toggles, 20 retained-project switches, draft preservation, Unicode argument forwarding and application failure exit propagation.
 - Startup diagnostics tolerate unavailable storage, record each phase once across workers and omit sensitive fields. Diagnostic startup retains saved project shortcuts without automatic Git work or cache writes.
 - Cached project switches preserve drafts and selections without filesystem reads, settings writes or sidebar reconstruction in the switch callback.
 - Only the active project view is mapped. Sidebar toggles reuse project rows and do not resize inactive project views or discard their drafts.

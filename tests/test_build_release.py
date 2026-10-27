@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -54,24 +56,54 @@ class LocalBuildPolicyTests(unittest.TestCase):
 
 
 class WindowsNativeReleaseTests(unittest.TestCase):
-    def test_windows_builder_uses_a_standalone_compiler_and_preserves_the_tk_runtime(self) -> None:
+    def test_runtime_signature_gate_rejects_invalid_foreign_or_incomplete_reports(self) -> None:
+        paths = [Path("runtime/python.exe"), Path("runtime/pythonw.exe")]
+        valid = [{"file": path.name, "status": "Valid", "signer": "CN=Python Software Foundation"} for path in paths]
+        reports = (
+            (valid, True),
+            ([dict(valid[0], status="HashMismatch"), valid[1]], False),
+            ([dict(valid[0], signer="CN=Other publisher"), valid[1]], False),
+            (valid[:1], False),
+            ([valid[0], valid[0]], False),
+        )
+        for report, accepted in reports:
+            with self.subTest(report=report), mock.patch.object(
+                BUILD_RELEASE.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(report), ""),
+            ):
+                if accepted:
+                    self.assertEqual(report, BUILD_RELEASE.verify_windows_runtime_signatures(paths))
+                else:
+                    with self.assertRaises(RuntimeError):
+                        BUILD_RELEASE.verify_windows_runtime_signatures(paths)
+
+    def test_runtime_copy_preserves_official_files_and_omits_third_party_packages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(BUILD_RELEASE.platform, "system", return_value="Windows"), mock.patch.object(BUILD_RELEASE, "run") as run:
-                artefact = BUILD_RELEASE.build(root / "dist", root / "work")
-            self.assertEqual(root / "dist" / "LiteGitWorkbench.dist", artefact)
-            command = run.call_args.args[0]
-            self.assertIn("nuitka", command)
-            self.assertIn("--standalone", command)
-            self.assertIn("--enable-plugin=tk-inter", command)
-            self.assertIn("--msvc=latest", command)
-            self.assertNotIn("--onefile", command)
+            source, destination = root / "official", root / "bundled"
+            source.mkdir()
+            filenames = ("python.exe", "pythonw.exe", "python3.dll", f"python{sys.version_info.major}{sys.version_info.minor}.dll", "vcruntime140.dll", "LICENSE.txt")
+            for filename in filenames:
+                (source / filename).write_bytes(f"Unmodified fixture for {filename}".encode("ascii"))
+            for name in ("DLLs", "tcl", "Lib", "Lib/site-packages", "Lib/__pycache__"):
+                (source / name).mkdir(exist_ok=True)
+            (source / "Lib" / "os.py").write_text("# Standard library fixture\n", encoding="ascii")
+            (source / "Lib" / "site-packages" / "private.py").touch()
+            (source / "Lib" / "__pycache__" / "stale.pyc").touch()
+            with mock.patch.object(BUILD_RELEASE, "verify_windows_runtime_signatures", return_value=[{"status": "Valid"}]):
+                metadata = BUILD_RELEASE.copy_windows_runtime(source, destination)
+            for filename in filenames:
+                self.assertEqual((source / filename).read_bytes(), (destination / filename).read_bytes())
+                self.assertEqual(BUILD_RELEASE.sha256(source / filename), metadata["files"][filename])
+            self.assertTrue((destination / "Lib" / "os.py").is_file())
+            self.assertFalse((destination / "Lib" / "site-packages").exists())
+            self.assertFalse((destination / "Lib" / "__pycache__").exists())
 
     def test_small_directory_executable_requires_a_complete_adjacent_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artefact = Path(directory) / "LiteGitWorkbench"
-            runtime = artefact
+            runtime = artefact / "runtime"
             runtime.mkdir(parents=True)
+            (runtime / "Lib").mkdir()
             (artefact / "LiteGitWorkbench.exe").write_bytes(b"MZ" + bytes(128 * 1024))
             with mock.patch.object(BUILD_RELEASE.platform, "system", return_value="Windows"):
                 with self.assertRaisesRegex(RuntimeError, "adjacent Python runtime"):
@@ -80,13 +112,16 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 (runtime / "_tkinter.pyd").write_bytes(b"Tkinter extension fixture")
                 (runtime / "init.tcl").write_bytes(b"Tcl runtime fixture")
                 (runtime / "tk.tcl").write_bytes(b"Tk runtime fixture")
+                (runtime / "pythonw.exe").touch()
+                (runtime / "Lib" / "os.py").touch()
+                (artefact / "LiteGitWorkbench.pyz").touch()
                 self.assertEqual("passed", BUILD_RELEASE.verify_artefact_structure(artefact)["status"])
 
     def test_directory_bundle_preserves_the_exe_and_adjacent_runtime_without_a_standalone_download(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             artefact = root / "LiteGitWorkbench"
-            runtime = artefact
+            runtime = artefact / "runtime"
             runtime.mkdir(parents=True)
             executable = artefact / "LiteGitWorkbench.exe"
             executable.write_bytes(b"MZ directory executable fixture")
@@ -100,18 +135,19 @@ class WindowsNativeReleaseTests(unittest.TestCase):
             self.assertFalse(archive.with_suffix(".exe").exists())
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(executable.read_bytes(), bundle.read("LiteGitWorkbench.exe"))
-                self.assertEqual(b"Python runtime fixture", bundle.read("python313.dll"))
+                self.assertEqual(b"Python runtime fixture", bundle.read("runtime/python313.dll"))
                 self.assertIn("start-without-restore.cmd", bundle.namelist())
 
     def test_directory_bundle_metadata_and_manifest_require_the_complete_runtime_zip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             artefact = root / "LiteGitWorkbench"
-            runtime = artefact
+            runtime = artefact / "runtime"
             runtime.mkdir(parents=True)
             executable = artefact / "LiteGitWorkbench.exe"
             executable.write_bytes(b"MZ directory executable fixture")
             (runtime / "python313.dll").write_bytes(b"Python runtime fixture")
+            (artefact / "runtime-verification.json").write_text('{"implementation": "Official CPython fixture"}', encoding="ascii")
             release = root / "release"
             with (
                 mock.patch.object(BUILD_RELEASE.platform, "system", return_value="Windows"),
@@ -127,8 +163,9 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 self.assertEqual(0, BUILD_RELEASE.main())
             archive = release / f"LiteGitWorkbench-{BUILD_RELEASE.VERSION}-windows-x86_64.zip"
             metadata = json.loads(archive.with_suffix(".zip.json").read_text(encoding="utf-8"))
-            self.assertEqual("Nuitka standalone directory", metadata["packager"])
-            self.assertEqual(".", metadata["executable"]["runtime_directory"])
+            self.assertEqual("MSVC launcher with official CPython runtime", metadata["packager"])
+            self.assertEqual("runtime", metadata["executable"]["runtime_directory"])
+            self.assertEqual("Official CPython fixture", metadata["python_runtime"]["implementation"])
             self.assertFalse(metadata["executable"]["standalone"])
             self.assertEqual(BUILD_RELEASE.sha256(executable), metadata["executable"]["sha256"])
             self.assertNotIn("standalone_executable", metadata)

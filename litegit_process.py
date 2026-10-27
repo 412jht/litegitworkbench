@@ -14,11 +14,29 @@ _dll_directory_handle: object | None = None
 _windows_runtime_ready = False
 
 
+def native_launcher() -> Path | None:
+    """Recognise the adjacent launcher without changing CPython's frozen state."""
+    value = os.environ.get("LITEGIT_NATIVE_LAUNCHER")
+    if not value:
+        return None
+    launcher = Path(value)
+    if not launcher.is_absolute() or launcher.name != "LiteGitWorkbench.exe":
+        return None
+    launcher = launcher.resolve()
+    if Path(sys.executable).resolve().parent != launcher.parent / "runtime":
+        return None
+    if not launcher.is_file() or not launcher.with_name("LiteGitWorkbench.pyz").is_file():
+        return None
+    return launcher
+
+
 def is_packaged_application() -> bool:
-    return bool(getattr(sys, "frozen", False) or globals().get("__compiled__"))
+    return bool(getattr(sys, "frozen", False) or globals().get("__compiled__") or native_launcher())
 
 
 def _bundle_directory() -> Path | None:
+    if native_launcher() is not None:
+        return Path(sys.executable).resolve().parent
     compiled = globals().get("__compiled__")
     if compiled is not None:
         return Path(compiled.python_runtime_dir).resolve()
@@ -37,6 +55,7 @@ def _outside_bundle(value: str, bundle: Path) -> bool:
 
 def external_environment(base: Mapping[str, str] | None = None) -> dict[str, str]:
     environment = dict(os.environ if base is None else base)
+    environment.pop("LITEGIT_NATIVE_LAUNCHER", None)
     bundle = _bundle_directory()
     if bundle is None:
         return environment
@@ -60,6 +79,8 @@ def external_environment(base: Mapping[str, str] | None = None) -> dict[str, str
 
 def prepare_external_processes() -> None:
     global _dll_directory_handle, _windows_runtime_ready
+    if native_launcher() is not None:
+        return  # The standard interpreter does not replace the inherited DLL search directory.
     bundle = _bundle_directory()
     if sys.platform != "win32" or bundle is None:
         return
@@ -94,13 +115,15 @@ def find_executable(name: str, environment: Mapping[str, str]) -> Path | None:
 
 
 def external_runtime_status() -> dict[str, object]:
+    launcher = native_launcher()
     status: dict[str, object] = {
         "frozen": is_packaged_application(),
-        "packager": "Nuitka" if globals().get("__compiled__") is not None else "PyInstaller" if getattr(sys, "frozen", False) else "source",
+        "packager": "CPython launcher" if launcher else "Nuitka" if globals().get("__compiled__") is not None else "PyInstaller" if getattr(sys, "frozen", False) else "source",
     }
     bundle = _bundle_directory()
     if bundle is not None:
-        status["bundle_in_application_directory"] = bundle.is_relative_to(Path(sys.executable).resolve().parent)
+        application_directory = launcher.parent if launcher else Path(sys.executable).resolve().parent
+        status["bundle_in_application_directory"] = bundle.is_relative_to(application_directory)
     if sys.platform == "win32" and bundle is not None:
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         query = kernel.GetDllDirectoryW
@@ -108,7 +131,7 @@ def external_runtime_status() -> dict[str, object]:
         query.restype = ctypes.c_uint
         directory = ctypes.create_unicode_buffer(32768)
         length = query(len(directory), directory)
-        status["windows_dll_search_reset"] = _windows_runtime_ready and length == 0 and directory.value == ""
+        status["windows_dll_search_reset"] = bool(launcher or _windows_runtime_ready) and length == 0 and directory.value == ""
     return status
 
 

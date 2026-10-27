@@ -1,5 +1,13 @@
 # Release notes
 
+## 2.1.5
+
+- Supply a native Windows EXE launcher with an adjacent, unmodified official CPython runtime and standard application archive. Double-click the EXE without installing Python separately.
+- Compile the launcher with MSVC, forward Unicode arguments directly to the interpreter without a command shell, and return the application's exit status. Record local launcher and Python startup phases.
+- Verify official interpreter hashes and Python Software Foundation signatures, include the standard library and Tcl/Tk, and omit build-machine third-party packages and cached bytecode.
+- Retain ordinary CPython DLL handling for the application, keep bundled paths and internal launch context out of external Git environments, and route commit editor helpers through the EXE.
+- Exercise the real packaged EXE with two repositories, repeated refreshes, 20 mapped sidebar toggles, 20 project switches, retained drafts, Unicode helper paths and failure status propagation. Keep this candidate unpublished pending validation on the affected machine.
+
 ## 2.1.4
 
 - Compile native Windows directory packages with pinned Nuitka 4.3.1 and MSVC after Kaspersky also blocked the 2.1.3 PyInstaller directory build. Preserve bundled Python/Tk and external Git DLL isolation. This changes the build pipeline and does not certify antivirus clearance.

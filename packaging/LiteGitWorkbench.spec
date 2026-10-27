@@ -6,7 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 if sys.platform == "win32":
-    raise RuntimeError("Use packaging/build_release.py for the Windows Nuitka build")
+    raise RuntimeError("Use packaging/build_release.py for the Windows CPython launcher build")
 
 a = Analysis(
     [str(PROJECT_ROOT / "litegit.py")],
@@ -49,8 +49,8 @@ if sys.platform == "darwin":
         icon=None,
         bundle_identifier="dev.litegit.workbench",
         info_plist={
-            "CFBundleShortVersionString": "2.1.4",
-            "CFBundleVersion": "2.1.4",
+            "CFBundleShortVersionString": "2.1.5",
+            "CFBundleVersion": "2.1.5",
             "LSMinimumSystemVersion": "11.0",
             "NSHighResolutionCapable": True,
         },

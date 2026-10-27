@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NON_ASCII_PATTERN = re.compile(r"[^\x00-\x7f]")
 IGNORED_DIRECTORIES = {".git", "__pycache__", "build", "release"}
-TEXT_SUFFIXES = {"", ".cmd", ".json", ".md", ".py", ".sh", ".txt", ".yml", ".yaml"}
+TEXT_SUFFIXES = {"", ".c", ".cmd", ".json", ".manifest", ".md", ".py", ".rc", ".sh", ".txt", ".yml", ".yaml"}
 
 
 class EnglishOnlyRepositoryTests(unittest.TestCase):

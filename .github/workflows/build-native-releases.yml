@@ -33,11 +33,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ runner.os == 'Windows' && '3.14' || '3.13' }}
       - name: Install Linux Tk runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y python3-tk tk-dev
       - name: Install native build dependencies
+        if: runner.os != 'Windows'
         run: python -m pip install --upgrade pip && python -m pip install -r packaging/requirements-build.txt
       - name: Run tests
         timeout-minutes: 5
@@ -48,7 +49,12 @@ jobs:
       - name: Build Windows portable release
         if: runner.os == 'Windows'
         run: python packaging/build_windows_portable.py
+      - name: Build Windows native launcher and runtime
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: packaging\build-windows-native.cmd --build-dir build/native
       - name: Build native release
+        if: runner.os != 'Windows'
         run: python packaging/build_release.py --build-dir build/native
       - uses: actions/upload-artifact@v4
         with:

@@ -24,15 +24,15 @@ macOS or Linux:
 
 ## Downloadable releases
 
-- Windows portable (recommended for 2.1.4 testing): extract the portable ZIP and double-click `run-portable.cmd`. Python 3.10+ with Tkinter and Git must already be available. Normal startup restores the last project.
-- Windows x64 native test candidate: extract the complete native ZIP and run `LiteGitWorkbench.exe`. Keep all adjacent runtime files and directories in place; the EXE cannot run on its own. Git must already be available; Python and Tk/Tcl are included. Compatibility on the affected Windows system remains unresolved.
+- Windows x64 native test candidate: extract the complete ZIP and double-click `LiteGitWorkbench.exe`. The native launcher starts the included official Python runtime and application archive. Keep `LiteGitWorkbench.pyz` and the `runtime` directory beside it. Git must already be available; no separate Python installation is required.
+- Windows portable: extract the portable ZIP and double-click `run-portable.cmd`. Python 3.10+ with Tkinter and Git must already be available. Normal startup restores the last project.
 - Linux x64: extract `LiteGitWorkbench`, grant execute permission and run it.
 - macOS Intel: extract and open `LiteGit Workbench.app`.
 - macOS Apple Silicon: extract and open `LiteGit Workbench.app`.
 
 Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows portable package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
 
-Version 2.1.4 remains an unpublished test candidate. On the affected Windows system, the user confirmed that sidebar expansion/collapse and manual project selection work in the Python package, and reported no Kaspersky alerts from script launches. The native candidate became unresponsive during sidebar testing; its cause has not been established. This feedback validates the tested Python interactions, not native EXE compatibility or every Git operation.
+Version 2.1.5 remains an unpublished test candidate. Its Windows EXE is a small MSVC launcher that runs the application with an adjacent, unmodified official CPython interpreter. Version 2.1.4's Python package passed the affected user's sidebar and manual project-selection checks, while its Nuitka EXE became unresponsive for an undetermined reason. The new package retains ordinary Python execution and supplies an EXE entry point with a complete runtime. Native compatibility and security-product behaviour require validation of this candidate.
 
 ## Features
 

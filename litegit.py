@@ -50,14 +50,14 @@ from litegit_core import (
     stash_format,
 )
 from litegit_reword import main as reword_helper_main
-from litegit_process import external_environment, external_runtime_status, find_executable, is_packaged_application, launch_external, prepare_external_processes
+from litegit_process import external_environment, external_runtime_status, find_executable, is_packaged_application, launch_external, native_launcher, prepare_external_processes
 from litegit_diff import DiffRow, DirectoryPreview, FileVersions, aligned_diff, read_file_versions
 from litegit_merge import BranchUpdateResult, unresolved_paths, update_branch
 from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip, bind_context_menu, context_row, popup_menu
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.4"
+VERSION = "2.1.5"
 
 
 def application_config_dir() -> Path:
@@ -81,7 +81,7 @@ def _editor_argument(value: str | os.PathLike[str]) -> str:
 
 
 def build_reword_environment(target: str, message: str) -> dict[str, str]:
-    executable = _editor_argument(sys.executable)
+    executable = _editor_argument(native_launcher() or sys.executable)
     if is_packaged_application():
         editor_prefix = f"{executable} --reword-helper"
     elif Path(sys.argv[0]).suffix.casefold() == ".pyz":
@@ -2185,7 +2185,7 @@ class LiteGitApp(tk.Tk):
         self.destroy()
 
 
-def repository_smoke_test(repository: Path, *, refreshes: int = 2) -> dict[str, object]:
+def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_repository: Path | None = None) -> dict[str, object]:
     repository = discover_repository(repository)
     executable = find_executable("git", external_environment())
     if executable is None:
@@ -2204,6 +2204,8 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2) -> dict[str, 
     deadline = time.monotonic() + 120
     completed = 0
     app._activate_repository(repository)
+    primary_view = app.active_view
+    interactions = 0
 
     def finish(error: str | None = None) -> None:
         if error:
@@ -2212,6 +2214,40 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2) -> dict[str, 
         for view in tuple(app._all_views):
             view._close()
         app.destroy()
+
+    def poll_interactions() -> None:
+        nonlocal interactions
+        if app.background_errors or time.monotonic() >= deadline:
+            finish("; ".join(app.background_errors) or "The packaged interaction check timed out")
+            return
+        if any(item._busy_count for item in app._all_views):
+            app.after(50, poll_interactions)
+            return
+        try:
+            secondary_view = app.views[app._project_key(alternate_repository)]
+            if not secondary_view.commit_tree.get_children():
+                raise RuntimeError("The alternate repository history did not load")
+            target = repository if interactions % 2 == 0 else alternate_repository
+            expected = primary_view if interactions % 2 == 0 else secondary_view
+            app._activate_repository(target)
+            app.toggle_sidebar()
+            app.update_idletasks()
+            if app.active_view is not expected or not expected.winfo_ismapped():
+                raise RuntimeError("The selected project view was not mapped")
+            if any(view.winfo_ismapped() for view in app._all_views if view is not expected):
+                raise RuntimeError("An inactive project still participates in the mapped layout")
+            if primary_view.commit_message_var.get() != "Primary smoke draft" or secondary_view.commit_message_var.get() != "Secondary smoke draft":
+                raise RuntimeError("A packaged project switch discarded its draft")
+        except Exception as error:
+            finish(str(error))
+            return
+        interactions += 1
+        if interactions < 20:
+            app.after(50, poll_interactions)
+            return
+        result["interactions"] = {"status": "passed", "sidebar_toggles": interactions, "project_switches": interactions, "drafts_preserved": True, "mapped_window": True}
+        result["status"] = "passed"
+        finish()
 
     def poll() -> None:
         nonlocal completed
@@ -2244,6 +2280,15 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2) -> dict[str, 
             "git_executable_absolute": executable.is_absolute(),
             "runtime": checked_runtime,
         })
+        if alternate_repository is not None:
+            result["status"] = "pending"
+            primary_view.commit_message_var.set("Primary smoke draft")
+            app.attributes("-alpha", 0.0)
+            app.deiconify()
+            app._activate_repository(alternate_repository)
+            app.active_view.commit_message_var.set("Secondary smoke draft")
+            app.after(50, poll_interactions)
+            return
         finish()
 
     app.after(30, poll)
@@ -2258,7 +2303,7 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2) -> dict[str, 
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "--reword-helper":
         return reword_helper_main(sys.argv[2:])
-    if len(sys.argv) in {3, 5} and sys.argv[1] == "--smoke-test":
+    if len(sys.argv) in {3, 5, 7} and sys.argv[1] == "--smoke-test":
         payload = {
             "app": APP_NAME,
             "version": VERSION,
@@ -2268,11 +2313,17 @@ def main() -> int:
             "python": platform.python_version(),
             "tk": str(tk.TkVersion),
         }
-        if len(sys.argv) == 5:
+        if len(sys.argv) >= 5:
             if sys.argv[3] != "--repository":
                 raise ValueError("Expected --repository <path> after the smoke-test output")
             try:
-                payload["repository_check"] = repository_smoke_test(Path(sys.argv[4]))
+                if len(sys.argv) == 7:
+                    if sys.argv[5] != "--alternate-repository":
+                        raise ValueError("Expected --alternate-repository <path> after the primary repository")
+                    alternate = discover_repository(Path(sys.argv[6]))
+                    payload["repository_check"] = repository_smoke_test(Path(sys.argv[4]), alternate_repository=alternate)
+                else:
+                    payload["repository_check"] = repository_smoke_test(Path(sys.argv[4]))
             except Exception as error:
                 payload["repository_check"] = {
                     "status": "failed", "error": redact_text(f"{type(error).__name__}: {error}"),

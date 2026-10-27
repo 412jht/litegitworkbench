@@ -7,6 +7,8 @@ import threading
 import time
 from pathlib import Path
 
+from litegit_process import is_packaged_application
+
 
 _log_file: Path | None = None
 _stages: set[str] = set()
@@ -16,7 +18,7 @@ _lock = threading.Lock()
 def begin_startup() -> None:
     global _log_file
     selected = os.environ.get("LITEGIT_STARTUP_LOG")
-    packaged = bool(getattr(sys, "frozen", False) or globals().get("__compiled__"))
+    packaged = is_packaged_application()
     if not selected and (not packaged or sys.platform != "win32"):
         return
     if selected:
