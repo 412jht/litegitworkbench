@@ -11,6 +11,7 @@ from unittest.mock import patch
 from litegit_core import GitError, StatusEntry, run_git
 from litegit_diff import DirectoryPreview, aligned_diff, read_file_versions
 from litegit_merge import abort_update, conflict_regions, finish_update, has_conflict_markers, pending_updates, read_conflict, save_resolution, unresolved_paths, update_branch
+from ui_events import process_events
 
 
 class RepositoryTests(unittest.TestCase):
@@ -303,9 +304,9 @@ class RepositoryTests(unittest.TestCase):
     def pump(self, root: object) -> None:
         deadline = time.monotonic() + 60
         while root.active_view._busy_count and time.monotonic() < deadline:
-            root.update()
+            process_events(root)
             time.sleep(0.01)
-        root.update()
+        process_events(root)
         self.assertEqual(0, root.active_view._busy_count, "The repository operation timed out")
 
     def test_background_update_conflict_can_be_completed_through_the_actual_ui(self) -> None:

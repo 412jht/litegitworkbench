@@ -15,6 +15,7 @@ from litegit_core import BranchEntry, CommitEntry, StatusEntry
 from litegit_diff import FileVersions
 from litegit_merge import ConflictFile
 from litegit_views import ConflictEditor
+from ui_events import process_events
 
 
 class ProjectAndEditorTests(unittest.TestCase):
@@ -54,9 +55,9 @@ class ProjectAndEditorTests(unittest.TestCase):
     def pump(self, condition: Callable[[], bool], timeout: float = 5) -> None:
         deadline = time.monotonic() + timeout
         while not condition() and time.monotonic() < deadline:
-            self.root.update()
+            process_events(self.root)
             time.sleep(0.01)
-        self.root.update()
+        process_events(self.root)
         self.assertTrue(condition(), "The asynchronous UI operation did not finish")
 
     def activate(self, repository: Path) -> litegit.RepositoryView:
@@ -156,7 +157,7 @@ class ProjectAndEditorTests(unittest.TestCase):
             view.status_entries.reverse()
             view._render_changes()
             self.assertEqual("0", view.change_tree.selection()[0])
-            self.root.update()
+            process_events(self.root)
 
     def conflict(self, working: str) -> ConflictFile:
         return ConflictFile(self.first, "file.txt", "stages", "base\n", "left\n", "right\n", working.encode("utf-8"))
@@ -234,7 +235,7 @@ class ProjectAndEditorTests(unittest.TestCase):
         for collapsed in (False, True):
             if self.root.sidebar_collapsed != collapsed:
                 self.root.toggle_sidebar()
-            self.root.update()
+            process_events(self.root)
             with patch.object(self.root.project_tree, "identify_row", return_value="0"):
                 tip._motion(event)
             self.pump(lambda: tip.window is not None)
@@ -333,20 +334,21 @@ class ProjectAndEditorTests(unittest.TestCase):
                 self.assertEqual(commits[1].full_hash, self.root.clipboard_get())
                 view.commit_menu.invoke("Cherry-pick...")
                 execute.assert_called_once_with(["cherry-pick", commits[1].full_hash], refresh=True)
-            self.root.update()
+            process_events(self.root)
 
     def test_branch_groups_span_the_tab_and_compare_starts_at_the_top(self) -> None:
         view = self.activate(self.first)
         self.root.attributes("-alpha", 0.0)
         self.root.geometry("1100x680")
         self.root.deiconify()
-        self.root.update()
+        process_events(self.root)
         groups = list(view.branch_groups.values())
+        self.pump(lambda: groups[0].winfo_x() < groups[1].winfo_x() < groups[2].winfo_x())
         self.assertLess(groups[0].winfo_x(), groups[1].winfo_x())
         self.assertLess(groups[1].winfo_x(), groups[2].winfo_x())
         self.assertLessEqual(groups[2].master.winfo_width() - groups[2].winfo_x() - groups[2].winfo_width(), 2)
         view.notebook.select(2)
-        self.root.update()
+        self.pump(lambda: view.compare_toolbar.winfo_ismapped())
         self.assertLessEqual(view.compare_toolbar.winfo_rooty() - view.changes_tab.winfo_rooty(), 8)
         self.root.withdraw()
 

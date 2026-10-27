@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import litegit
+from ui_events import process_events
 
 
 class ProjectCacheTests(unittest.TestCase):
@@ -80,7 +81,7 @@ class ProjectCacheTests(unittest.TestCase):
         self.addCleanup(root._close)
         deadline = time.monotonic() + 5
         while (root.active_view.repository != worktree or root.active_view._busy_count) and time.monotonic() < deadline:
-            root.update()
+            process_events(root)
             time.sleep(0.01)
         self.assertEqual(worktree, root.active_view.repository)
         self.assertEqual("main-project", root.project_tree.item("0", "text"))
@@ -88,9 +89,9 @@ class ProjectCacheTests(unittest.TestCase):
         root.remove_project(str(worktree))
         deadline = time.monotonic() + 5
         while root.active_view._busy_count and time.monotonic() < deadline:
-            root.update()
+            process_events(root)
             time.sleep(0.01)
-        root.update()
+        process_events(root)
         self.assertEqual([str(main)], litegit.load_settings()["projects"])
         self.assertEqual(str(main), litegit.load_settings()["last_repository"])
         self.assertTrue(worktree.is_dir())

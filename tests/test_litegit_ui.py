@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import litegit
 from litegit_core import CommitEntry
+from ui_events import process_events
 
 
 class CommitHistoryUiTests(unittest.TestCase):
@@ -55,7 +56,7 @@ class CommitHistoryUiTests(unittest.TestCase):
         self.app.commit_tree.selection_set("0")
         with patch("litegit.messagebox.showinfo") as showinfo:
             self.app._render_history((commits, set()))
-            self.app.update()
+            process_events(self.app)
         showinfo.assert_not_called()
 
     def test_message_editor_has_explicit_save_and_shortcut(self) -> None:
