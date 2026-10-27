@@ -110,6 +110,13 @@ def copy_windows_runtime(source: Path, destination: Path) -> dict[str, object]:
     ignored = shutil.ignore_patterns("__pycache__", "*.pyc", "site-packages", "test", "tests", "ensurepip", "idle_test", "turtledemo")
     for name in ("DLLs", "Lib", "tcl"):
         shutil.copytree(source / name, destination / name, ignore=ignored)
+    for pattern in ("tcl*.dll", "tk*.dll"):
+        for original in (source / "DLLs").glob(pattern):
+            relative = original.relative_to(source)
+            copied = destination / relative
+            if sha256(original) != sha256(copied):
+                raise RuntimeError(f"The bundled Tcl/Tk library changed during copying: {original.name}")
+            files[relative.as_posix()] = sha256(copied)
     return {
         "implementation": "Unmodified official CPython interpreter and standard library",
         "version": platform.python_version(),
@@ -196,8 +203,8 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
             "standard_library": (runtime / "Lib" / "os.py").is_file(),
             "python_dll": any(runtime.glob("python*.dll")),
             "tkinter_extension": any(runtime.rglob("_tkinter*.pyd")),
-            "tcl_library": any(runtime.rglob("init.tcl")),
-            "tk_library": any(runtime.rglob("tk.tcl")),
+            "tcl_library": any(runtime.rglob("init.tcl")) or any((runtime / "DLLs").glob("tcl*.dll")),
+            "tk_library": any(runtime.rglob("tk.tcl")) or any((runtime / "DLLs").glob("tk*.dll")),
         }
         if not all(required.values()):
             missing = [name for name, present in required.items() if not present]
@@ -272,8 +279,11 @@ def smoke_test(artefact: Path) -> dict[str, object]:
             raise RuntimeError("The directory bundle did not use its adjacent runtime")
         if result["repository_check"]["runtime"].get("packager") != "CPython launcher":
             raise RuntimeError("The Windows package did not use the standard CPython launcher")
-        if not all(result["repository_check"]["runtime"].get(name) is True for name in ("python_prefix_in_runtime", "standard_library_in_runtime", "tkinter_extension_in_runtime")):
-            raise RuntimeError("The application used Python files outside the bundled runtime")
+        if not all(result["repository_check"]["runtime"].get(name) is True for name in (
+            "python_prefix_in_runtime", "standard_library_in_runtime", "tkinter_extension_in_runtime",
+            "tcl_dll_in_runtime", "tk_dll_in_runtime", "tcl_data_in_runtime", "tk_data_in_runtime",
+        )):
+            raise RuntimeError(f"The application runtime independence check failed: {result['repository_check']['runtime']}")
         if result["repository_check"].get("interactions", {}).get("status") != "passed":
             raise RuntimeError("The packaged sidebar and retained-project interaction check did not pass")
     return result

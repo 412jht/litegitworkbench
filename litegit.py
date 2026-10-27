@@ -2273,6 +2273,15 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
         if checked_runtime.get("windows_dll_search_reset") is False:
             finish("The inherited DLL search directory changed during repository refresh")
             return
+        if native_launcher() is not None:
+            bundle = Path(sys.executable).resolve().parent
+            try:
+                for name, library in (("tcl_data_in_runtime", app.tk.call("info", "library")), ("tk_data_in_runtime", app.tk.call("set", "tk_library"))):
+                    value = str(library)
+                    checked_runtime[name] = value.startswith(("//zipfs:/", "zipfs:/")) or Path(value).resolve().is_relative_to(bundle)
+            except Exception as error:
+                finish(f"The bundled Tcl/Tk library check failed: {error}")
+                return
         result.update({
             "status": "passed", "mode": "interface", "refreshes": completed,
             "branch": view.summary_vars["branch"].get(), "head": view.summary_vars["head"].get(),

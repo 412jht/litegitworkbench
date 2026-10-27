@@ -137,6 +137,23 @@ def external_runtime_status() -> dict[str, object]:
         directory = ctypes.create_unicode_buffer(32768)
         length = query(len(directory), directory)
         status["windows_dll_search_reset"] = bool(launcher or _windows_runtime_ready) and length == 0 and directory.value == ""
+        if launcher is not None:
+            module_handle = kernel.GetModuleHandleW
+            module_handle.argtypes = [ctypes.c_wchar_p]
+            module_handle.restype = ctypes.c_void_p
+            module_path = kernel.GetModuleFileNameW
+            module_path.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint]
+            module_path.restype = ctypes.c_uint
+            for name, pattern in (("tcl_dll_in_runtime", "tcl*.dll"), ("tk_dll_in_runtime", "tk*.dll")):
+                status[name] = False
+                for candidate in (bundle / "DLLs").glob(pattern):
+                    handle = module_handle(candidate.name)
+                    if handle:
+                        loaded = ctypes.create_unicode_buffer(32768)
+                        loaded_length = module_path(handle, loaded, len(loaded))
+                        if 0 < loaded_length < len(loaded) and Path(loaded.value).resolve().is_relative_to(bundle):
+                            status[name] = True
+                            break
     return status
 
 

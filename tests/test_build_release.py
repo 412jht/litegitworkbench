@@ -116,6 +116,12 @@ class WindowsNativeReleaseTests(unittest.TestCase):
                 (runtime / "Lib" / "os.py").touch()
                 (artefact / "LiteGitWorkbench.pyz").touch()
                 self.assertEqual("passed", BUILD_RELEASE.verify_artefact_structure(artefact)["status"])
+                (runtime / "init.tcl").unlink()
+                (runtime / "tk.tcl").unlink()
+                (runtime / "DLLs").mkdir()
+                (runtime / "DLLs" / "tcl90.dll").touch()
+                (runtime / "DLLs" / "tk90.dll").touch()
+                self.assertEqual("passed", BUILD_RELEASE.verify_artefact_structure(artefact)["status"])
 
     def test_directory_bundle_preserves_the_exe_and_adjacent_runtime_without_a_standalone_download(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
