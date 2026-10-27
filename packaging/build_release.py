@@ -110,7 +110,7 @@ def copy_windows_runtime(source: Path, destination: Path) -> dict[str, object]:
     ignored = shutil.ignore_patterns("__pycache__", "*.pyc", "site-packages", "test", "tests", "ensurepip", "idle_test", "turtledemo")
     for name in ("DLLs", "Lib", "tcl"):
         shutil.copytree(source / name, destination / name, ignore=ignored)
-    for pattern in ("tcl*.dll", "tk*.dll"):
+    for pattern in ("tcl*.dll", "*tk*.dll"):
         for original in (source / "DLLs").glob(pattern):
             relative = original.relative_to(source)
             copied = destination / relative
@@ -203,12 +203,13 @@ def verify_artefact_structure(artefact: Path) -> dict[str, object]:
             "standard_library": (runtime / "Lib" / "os.py").is_file(),
             "python_dll": any(runtime.glob("python*.dll")),
             "tkinter_extension": any(runtime.rglob("_tkinter*.pyd")),
-            "tcl_library": any(runtime.rglob("init.tcl")) or any((runtime / "DLLs").glob("tcl*.dll")),
-            "tk_library": any(runtime.rglob("tk.tcl")) or any((runtime / "DLLs").glob("tk*.dll")),
+            "tcl_library": any(runtime.rglob("init.tcl")) or any(path for path in (runtime / "DLLs").glob("tcl*.dll") if "tk" not in path.stem.lower()),
+            "tk_library": any(runtime.rglob("tk.tcl")) or any((runtime / "DLLs").glob("*tk*.dll")),
         }
         if not all(required.values()):
             missing = [name for name, present in required.items() if not present]
-            raise RuntimeError(f"The Windows directory bundle is missing its adjacent Python runtime components: {', '.join(missing)}")
+            libraries = [path.name for path in (runtime / "DLLs").glob("*.dll")]
+            raise RuntimeError(f"The Windows directory bundle is missing its adjacent Python runtime components: {', '.join(missing)}; available libraries: {libraries}")
     if system == "Linux" and header != b"\x7fELF":
         raise RuntimeError(f"Packaged executable has no ELF header: {header!r}")
     if system == "Darwin" and header not in {

@@ -144,9 +144,11 @@ def external_runtime_status() -> dict[str, object]:
             module_path = kernel.GetModuleFileNameW
             module_path.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint]
             module_path.restype = ctypes.c_uint
-            for name, pattern in (("tcl_dll_in_runtime", "tcl*.dll"), ("tk_dll_in_runtime", "tk*.dll")):
+            for name, pattern in (("tcl_dll_in_runtime", "tcl*.dll"), ("tk_dll_in_runtime", "*tk*.dll")):
                 status[name] = False
                 for candidate in (bundle / "DLLs").glob(pattern):
+                    if name == "tcl_dll_in_runtime" and "tk" in candidate.stem.lower():
+                        continue
                     handle = module_handle(candidate.name)
                     if handle:
                         loaded = ctypes.create_unicode_buffer(32768)
