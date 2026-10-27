@@ -2226,6 +2226,7 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
     primary_view = app.active_view
     interactions = 0
     layout_widths: list[int] = []
+    layout_targets: list[int] = []
 
     def finish(error: str | None = None) -> None:
         if error:
@@ -2237,11 +2238,11 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
 
     def poll_layout() -> None:
         if app.background_errors or time.monotonic() >= deadline:
-            finish("; ".join(app.background_errors) or "The packaged layout check timed out")
+            finish("; ".join(app.background_errors) or f"The packaged layout check timed out: window {app.winfo_width()}, summary {app.active_view.summary_bar.winfo_width()}, completed widths {layout_widths}, targets {layout_targets}")
             return
         view = app.active_view
         summary = view.summary_bar
-        expected = 800 if not layout_widths else 1500
+        expected = layout_targets[len(layout_widths)]
         app.update_idletasks()
         if app.winfo_width() != expected or summary.winfo_width() != expected - app.sidebar.winfo_width() or summary._layout_job is not None or view.diff_preview._render_job is not None:
             app.after(30, poll_layout)
@@ -2256,8 +2257,8 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
             if sum(mode.sidebar.winfo_x() >= 0 for mode in app._sidebar_modes.values()) != 1:
                 raise RuntimeError("More than one sidebar layout is inside the window")
             layout_widths.append(expected)
-            if expected == 800:
-                app.geometry("1500x800")
+            if len(layout_widths) == 1:
+                app.geometry(f"{layout_targets[1]}x800")
                 app.after(50, poll_layout)
                 return
             pane = next(child for child in view.changes_tab.winfo_children() if isinstance(child, DeferredPanedwindow))
@@ -2323,7 +2324,9 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
         view.notebook.select(view.changes_tab)
         view.diff_preview.render(FileVersions("before\n" * 300, "after\n" * 300, "HEAD", "Working tree"), "layout-check.txt")
         app.minsize(640, 480)
-        app.geometry("800x800")
+        maximum = max(640, min(app.winfo_screenwidth() - 80, app.maxsize()[0] - 32))
+        layout_targets.extend((min(800, maximum), min(1500, maximum)))
+        app.geometry(f"{layout_targets[0]}x800")
         app.after(50, poll_layout)
 
     def poll() -> None:

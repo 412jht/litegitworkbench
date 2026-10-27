@@ -19,6 +19,7 @@ class LayoutTests(unittest.TestCase):
             self.skipTest(f"Tk is unavailable: {error}")
         self.errors: list[str] = []
         self.root.report_callback_exception = lambda *_arguments: self.errors.append(str(_arguments))
+        self.maximum_width = min(self.root.winfo_screenwidth() - 80, self.root.maxsize()[0] - 32)
 
     def tearDown(self) -> None:
         if hasattr(self, "root"):
@@ -160,7 +161,8 @@ class LayoutTests(unittest.TestCase):
         summary = ResponsiveSummary(self.root, list(zip(captions, variables)))
         summary.pack(fill=tk.X)
         seen_columns = set()
-        for width in (1600, 1050, 700, 460, 300, 1050):
+        for requested in (1600, 1050, 700, 460, 300, 1050):
+            width = min(requested, self.maximum_width)
             with self.subTest(width=width):
                 self.root.geometry(f"{width}x900")
                 self.settle(lambda: summary.winfo_width() == width and summary._layout_job is None)
@@ -190,11 +192,12 @@ class LayoutTests(unittest.TestCase):
         fields = [(caption, tk.StringVar(self.root, "-")) for caption in ("Branch", "HEAD", "Upstream", "Synchronisation", "Working tree", "Worktrees")]
         summary = ResponsiveSummary(self.root, fields)
         summary.pack(fill=tk.X)
-        self.root.geometry("1300x600")
-        self.settle(lambda: summary.winfo_width() == 1300 and summary._layout_job is None)
+        narrow, wide = min(1300, self.maximum_width - 120), min(1500, self.maximum_width)
+        self.root.geometry(f"{narrow}x600")
+        self.settle(lambda: summary.winfo_width() == narrow and summary._layout_job is None)
         before = [(cell.winfo_x(), cell.winfo_y(), cell.winfo_width(), cell.winfo_height()) for cell in summary.cells]
-        self.root.geometry("1500x600")
-        self.settle(lambda: summary.winfo_width() == 1500 and summary._layout_job is None)
+        self.root.geometry(f"{wide}x600")
+        self.settle(lambda: summary.winfo_width() == wide and summary._layout_job is None)
         # Aqua can forward Configure events from a resized ancestor even when
         # the child geometry is unchanged. Compare the resulting bounds.
         self.assertEqual(before, [(cell.winfo_x(), cell.winfo_y(), cell.winfo_width(), cell.winfo_height()) for cell in summary.cells])
