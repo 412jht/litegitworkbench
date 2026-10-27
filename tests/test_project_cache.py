@@ -15,7 +15,7 @@ class ProjectCacheTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name)
+        self.directory = Path(temporary.name).resolve()
         self.cache = self.directory / "run" / ".litegit-projects.json"
         self.global_file = self.directory / "user" / "settings.json"
         for replacement in (patch("litegit.PROJECT_CACHE_FILE", self.cache), patch("litegit.CONFIG_FILE", self.global_file)):

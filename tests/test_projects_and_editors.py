@@ -34,8 +34,9 @@ class ProjectAndEditorTests(unittest.TestCase):
             self.skipTest(f"Tk is unavailable: {exc}")
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.first = Path(self.temporary.name) / "first"
-        self.second = Path(self.temporary.name) / "second"
+        directory = Path(self.temporary.name).resolve()
+        self.first = directory / "first"
+        self.second = directory / "second"
         self.first.mkdir()
         self.second.mkdir()
 

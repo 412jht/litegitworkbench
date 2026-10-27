@@ -17,7 +17,7 @@ class RepositoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="litegit-210-")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.repository = self.root / "repository"
         self.repository.mkdir()
         self.git("init", "-b", "main")
