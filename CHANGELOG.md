@@ -1,5 +1,16 @@
 # Release notes
 
+## 2.2.0
+
+- Promote the user-accepted 2.1.7 test candidate to a stable release, consolidating the changes tested in 2.1.2 through 2.1.7 since the previous stable version, 2.1.1.
+- Supply a Windows x64 ZIP containing the native MSVC EXE launcher, application archive and unmodified official CPython/Tcl/Tk runtime. Start by double-clicking the EXE without installing Python separately; Git remains required.
+- Retain open project interfaces, selections and commit drafts whilst switching. Save settings on a background worker, retry Windows cache contention and recover from a backup scoped to the running directory.
+- Keep fixed expanded/collapsed Projects layouts and inactive repository views without repeated reconstruction or resizing. Preserve focus and project selection whilst toggling the sidebar.
+- Calculate aligned file differences off the interface thread, insert large previews in batches and cancel outdated renders.
+- Preview internal divider drags and resize content once on release. Preserve editable text and release pointer capture on cancellation, hiding or closing the pane.
+- Flow complete Branch / HEAD summary fields between rows. Keep captions intact, wrap only values wider than a complete row and restore single-line values when they fit again.
+- Verify official runtime hashes and signatures, bundled runtime independence, repository refreshes, project switching, drafts, divider behaviour, responsive summaries and commit editor helpers. Include native packages for Windows, Linux and both macOS architectures, the Windows portable package, metadata and SHA-256 checksums.
+
 ## 2.1.7
 
 - Keep repository summary captions intact, including Worktrees with a short count. Remove the half-width caption constraint and fixed field-width cap introduced in 2.1.6.

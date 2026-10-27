@@ -49,8 +49,8 @@ if sys.platform == "darwin":
         icon=None,
         bundle_identifier="dev.litegit.workbench",
         info_plist={
-            "CFBundleShortVersionString": "2.1.7",
-            "CFBundleVersion": "2.1.7",
+            "CFBundleShortVersionString": "2.2.0",
+            "CFBundleVersion": "2.2.0",
             "LSMinimumSystemVersion": "11.0",
             "NSHighResolutionCapable": True,
         },

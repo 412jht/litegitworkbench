@@ -19,7 +19,7 @@ from typing import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_POLICY_PATH = PROJECT_ROOT / ".litegit-local-policy.json"
-VERSION = "2.1.7"
+VERSION = "2.2.0"
 
 
 def normalised_architecture() -> str:

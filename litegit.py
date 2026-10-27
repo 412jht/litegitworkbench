@@ -58,7 +58,7 @@ from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.7"
+VERSION = "2.2.0"
 
 
 def application_config_dir() -> Path:

@@ -24,7 +24,7 @@ macOS or Linux:
 
 ## Downloadable releases
 
-- Windows x64 native test candidate: extract the complete ZIP and double-click `LiteGitWorkbench.exe`. The native launcher starts the included official Python runtime and application archive. Keep `LiteGitWorkbench.pyz` and the `runtime` directory beside it. Git must already be available; no separate Python installation is required.
+- Windows x64 native: extract the complete ZIP and double-click `LiteGitWorkbench.exe`. The native launcher starts the included official Python runtime and application archive. Keep `LiteGitWorkbench.pyz` and the `runtime` directory beside it. Git must already be available; no separate Python installation is required.
 - Windows portable: extract the portable ZIP and double-click `run-portable.cmd`. Python 3.10+ with Tkinter and Git must already be available. Normal startup restores the last project.
 - Linux x64: extract `LiteGitWorkbench`, grant execute permission and run it.
 - macOS Intel: extract and open `LiteGit Workbench.app`.
@@ -32,7 +32,7 @@ macOS or Linux:
 
 Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows portable package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
 
-Version 2.1.7 remains an unpublished test candidate. It fixes summary captions splitting across lines and fitting values remaining wrapped after the window grows. It retains the small MSVC EXE launcher and adjacent official CPython runtime used by 2.1.5, for which the affected user tentatively reported no new Kaspersky alert, together with the divider and Projects improvements from 2.1.6. Candidate acceptance still requires checks on the affected machine.
+Version 2.2.0 promotes the user-accepted 2.1.7 test candidate to a stable release. It combines retained project views and responsive switching, background cache saves, batched file previews, divider drag previews and summary fields that keep their captions intact. The Windows native package uses the established MSVC EXE launcher and adjacent official CPython runtime.
 
 ## Features
 
