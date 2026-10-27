@@ -50,6 +50,7 @@ from litegit_core import (
     stash_format,
 )
 from litegit_reword import main as reword_helper_main
+from litegit_layout import DeferredPanedwindow, ResponsiveSummary
 from litegit_process import external_environment, external_runtime_status, find_executable, is_packaged_application, launch_external, native_launcher, prepare_external_processes
 from litegit_diff import DiffRow, DirectoryPreview, FileVersions, aligned_diff, read_file_versions
 from litegit_merge import BranchUpdateResult, unresolved_paths, update_branch
@@ -57,7 +58,7 @@ from litegit_views import ConflictEditor, ConflictManager, DiffPreview, HoverTip
 
 
 APP_NAME = "LiteGit Workbench"
-VERSION = "2.1.5"
+VERSION = "2.1.6"
 
 
 def application_config_dir() -> Path:
@@ -293,8 +294,6 @@ class RepositoryView(ttk.Frame):
         ttk.Button(top, text="Pull", command=self.pull).pack(side=tk.LEFT, padx=2)
         ttk.Button(top, text="Push", command=self.push).pack(side=tk.LEFT, padx=2)
 
-        summary = ttk.Frame(self, padding=(8, 2, 8, 7))
-        summary.pack(fill=tk.X)
         self.summary_vars = {key: tk.StringVar(value="-") for key in ("branch", "head", "upstream", "sync", "state", "worktrees")}
         captions = (
             ("Branch", "branch"),
@@ -304,11 +303,8 @@ class RepositoryView(ttk.Frame):
             ("Working tree", "state"),
             ("Worktrees", "worktrees"),
         )
-        for caption, key in captions:
-            frame = ttk.Frame(summary)
-            frame.pack(side=tk.LEFT, padx=(0, 20))
-            ttk.Label(frame, text=f"{caption}:").pack(side=tk.LEFT)
-            ttk.Label(frame, textvariable=self.summary_vars[key], style="Summary.TLabel").pack(side=tk.LEFT)
+        self.summary_bar = ResponsiveSummary(self, [(caption, self.summary_vars[key]) for caption, key in captions])
+        self.summary_bar.pack(fill=tk.X)
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 5))
@@ -448,7 +444,7 @@ class RepositoryView(ttk.Frame):
         ttk.Button(toolbar, text="Create tag", command=self.create_tag_at_commit).pack(side=tk.LEFT, padx=2)
         tk.Label(toolbar, text="* Local only / not pushed", foreground="#087A3E").pack(side=tk.RIGHT, padx=(10, 2))
         tk.Label(toolbar, text="* Published remotely", foreground="#7A8494").pack(side=tk.RIGHT, padx=2)
-        pane = ttk.Panedwindow(tab, orient=tk.VERTICAL)
+        pane = DeferredPanedwindow(tab, orient=tk.VERTICAL)
         pane.pack(fill=tk.BOTH, expand=True)
         upper = ttk.Frame(pane)
         lower = ttk.Frame(pane)
@@ -485,7 +481,7 @@ class RepositoryView(ttk.Frame):
         tab = ttk.Frame(self.notebook, padding=6)
         self.changes_tab = tab
         self.notebook.add(tab, text="Local changes")
-        pane = ttk.Panedwindow(tab, orient=tk.HORIZONTAL)
+        pane = DeferredPanedwindow(tab, orient=tk.HORIZONTAL)
         pane.pack(fill=tk.BOTH, expand=True)
         left = ttk.Frame(pane)
         right = ttk.Frame(pane)
@@ -1867,30 +1863,41 @@ class LiteGitApp(tk.Tk):
             self.after(100, lambda: self.open_repository(last))
 
     def _build_project_sidebar(self) -> None:
-        self.sidebar = ttk.Frame(self, padding=(4, 8), width=240)
-        self.sidebar.place(x=0, y=0, width=240, relheight=1)
-        self.sidebar.pack_propagate(False)
-        header = ttk.Frame(self.sidebar)
-        header.pack(fill=tk.X)
-        self.project_label = ttk.Label(header, text="Projects")
-        self.project_label.pack(side=tk.LEFT)
-        self.collapse_button = ttk.Button(header, width=3, command=self.toggle_sidebar)
-        self.collapse_button.pack(side=tk.RIGHT)
-        self.add_project_button = ttk.Button(self.sidebar, command=lambda: self.active_view.choose_repository())
-        self.add_project_button.pack(fill=tk.X, pady=8)
-        self.remove_project_button = ttk.Button(self.sidebar, command=self.remove_project)
-        self.remove_project_button.pack(fill=tk.X, pady=(0, 8))
-        self.project_tree = ttk.Treeview(self.sidebar, show="tree", selectmode="browse")
-        self.project_tree.column("#0", width=200, minwidth=24)
-        self.project_tree.pack(fill=tk.BOTH, expand=True)
-        self.project_tree.bind("<<TreeviewSelect>>", self._select_project)
-        self.project_tooltip = HoverTip(self.project_tree, self._project_tooltip_text)
         self.project_menu = tk.Menu(self, tearoff=False)
         self.project_menu.add_command(label="Open project", command=lambda: self.open_repository(self._project_menu_path) if self._project_menu_path else None)
         self.project_menu.add_command(label="Remove from Projects", command=lambda: self.remove_project(self._project_menu_path))
-        bind_context_menu(self.project_tree, self._on_project_context_menu)
-        self.project_hint = ttk.Label(self.sidebar, text="Open projects keep their tabs,\nfilters and commit drafts.", wraplength=225)
-        self.project_hint.pack(fill=tk.X, pady=8)
+        self._sidebar_modes: dict[bool, SimpleNamespace] = {}
+        for collapsed in (False, True):
+            width = 56 if collapsed else 240
+            sidebar = ttk.Frame(self, padding=(4, 8), width=width)
+            sidebar.pack_propagate(False)
+            sidebar.place(x=-width, y=0, width=width, relheight=1)
+            header = ttk.Frame(sidebar)
+            header.pack(fill=tk.X)
+            label = ttk.Label(header, text="Projects")
+            if not collapsed:
+                label.pack(side=tk.LEFT)
+            collapse = ttk.Button(header, text=">" if collapsed else "<", width=3, command=self.toggle_sidebar)
+            collapse.pack(side=tk.RIGHT)
+            add = ttk.Button(sidebar, text="+" if collapsed else "+ Add Git directory...", command=lambda: self.active_view.choose_repository())
+            add.pack(fill=tk.X, pady=8)
+            remove = ttk.Button(sidebar, text="-" if collapsed else "Remove from Projects", command=self.remove_project)
+            remove.pack(fill=tk.X, pady=(0, 8))
+            tree = ttk.Treeview(sidebar, show="tree", selectmode="browse")
+            tree.column("#0", width=40 if collapsed else 200, minwidth=24)
+            tree.pack(fill=tk.BOTH, expand=True)
+            tree.bind("<<TreeviewSelect>>", self._select_project)
+            tooltip = HoverTip(tree, self._project_tooltip_text)
+            bind_context_menu(tree, self._on_project_context_menu)
+            hint = ttk.Label(sidebar, text="Open projects keep their tabs,\nfilters and commit drafts.", wraplength=225)
+            if not collapsed:
+                hint.pack(fill=tk.X, pady=8)
+            self._sidebar_modes[collapsed] = SimpleNamespace(
+                sidebar=sidebar, project_label=label, collapse_button=collapse,
+                add_project_button=add, remove_project_button=remove,
+                project_tree=tree, project_tooltip=tooltip, project_hint=hint,
+            )
+        self._update_sidebar_layout()
 
     @staticmethod
     def _project_key(repository: Path) -> str:
@@ -2055,55 +2062,67 @@ class LiteGitApp(tk.Tk):
     def toggle_sidebar(self) -> None:
         self.sidebar_collapsed = not self.sidebar_collapsed
         self._save_project_state()
-        self._render_projects()
+        self._update_sidebar_layout()
 
     def _update_sidebar_layout(self) -> None:
         if self._sidebar_rendered_collapsed == self.sidebar_collapsed:
             return
         self._sidebar_rendered_collapsed = self.sidebar_collapsed
-        self.sidebar.configure(width=56 if self.sidebar_collapsed else 240)
-        self.sidebar.place_configure(width=56 if self.sidebar_collapsed else 240)
-        self._place_active_view()
-        self.collapse_button.configure(text=">" if self.sidebar_collapsed else "<")
-        self.add_project_button.configure(text="+" if self.sidebar_collapsed else "+ Add Git directory...")
-        self.remove_project_button.configure(text="-" if self.sidebar_collapsed else "Remove from Projects")
-        if self.sidebar_collapsed:
-            self.project_label.pack_forget()
-            self.project_hint.pack_forget()
-        else:
-            self.project_label.pack(side=tk.LEFT)
-            self.project_hint.pack(fill=tk.X, pady=8)
+        mode = self._sidebar_modes[self.sidebar_collapsed]
+        focused = self.focus_get()
+        focus_target = None
+        if hasattr(self, "sidebar"):
+            self.project_tooltip.hide()
+            for name, widget in vars(mode).items():
+                if focused is getattr(self, name):
+                    focus_target = widget
+            self.sidebar.place_configure(x=-int(self.sidebar.cget("width")))
+        for name, widget in vars(mode).items():
+            setattr(self, name, widget)
+        self.sidebar.place_configure(x=0)
+        self.sidebar.lift()
+        selection = self.project_tree.selection()
+        if selection:
+            self.project_tree.see(selection[0])
+        if hasattr(self, "active_view"):
+            self._place_active_view()
+        if focus_target is not None:
+            focus_target.focus_set()
 
     def _render_projects(self) -> None:
         self.project_tooltip.hide()
         self._update_sidebar_layout()
-        self.remove_project_button.configure(state=tk.NORMAL if self.project_paths else tk.DISABLED)
         desired_rows = {str(index) for index in range(len(self.project_paths))}
-        obsolete = [row for row in self.project_tree.get_children() if row not in desired_rows]
-        if obsolete:
-            self.project_tree.delete(*obsolete)
-        self._project_rows = {}
-        for index, path in enumerate(self.project_paths):
-            repository = Path(path)
-            label = f"{index + 1:02d}" if self.sidebar_collapsed else self._project_name(path)
-            row = str(index)
-            if self.project_tree.exists(row):
-                if self.project_tree.item(row, "text") != label:
-                    self.project_tree.item(row, text=label)
-            else:
-                self.project_tree.insert("", tk.END, iid=row, text=label)
-            self._project_rows[self._project_key(repository)] = row
+        self._project_rows = {self._project_key(Path(path)): str(index) for index, path in enumerate(self.project_paths)}
+        for collapsed, mode in self._sidebar_modes.items():
+            tree = mode.project_tree
+            mode.remove_project_button.configure(state=tk.NORMAL if self.project_paths else tk.DISABLED)
+            obsolete = [row for row in tree.get_children() if row not in desired_rows]
+            if obsolete:
+                tree.delete(*obsolete)
+            for index, path in enumerate(self.project_paths):
+                label = f"{index + 1:02d}" if collapsed else self._project_name(path)
+                row = str(index)
+                if tree.exists(row):
+                    if tree.item(row, "text") != label:
+                        tree.item(row, text=label)
+                else:
+                    tree.insert("", tk.END, iid=row, text=label)
         self._select_active_project()
 
     def _select_active_project(self) -> None:
         active = self._project_key(self.active_view.repository) if self.active_view.repository else ""
         row = self._project_rows.get(active)
-        if row is not None and self.project_tree.selection() != (row,):
-            self.project_tree.selection_set(row)
-            self.project_tree.see(row)
+        if row is not None:
+            for mode in self._sidebar_modes.values():
+                tree = mode.project_tree
+                if tree.selection() != (row,):
+                    tree.selection_set(row)
+                    if tree is self.project_tree:
+                        tree.see(row)
 
-    def _select_project(self, _event: tk.Event[tk.Misc] | None = None) -> None:
-        if self._suppress_project_selection:
+    def _select_project(self, event: tk.Event[tk.Misc] | None = None) -> None:
+        if self._suppress_project_selection or (event is not None and event.widget is not self.project_tree):
             return
         selection = self.project_tree.selection()
         if selection:
@@ -2206,6 +2225,7 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
     app._activate_repository(repository)
     primary_view = app.active_view
     interactions = 0
+    layout_widths: list[int] = []
 
     def finish(error: str | None = None) -> None:
         if error:
@@ -2214,6 +2234,57 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
         for view in tuple(app._all_views):
             view._close()
         app.destroy()
+
+    def poll_layout() -> None:
+        if app.background_errors or time.monotonic() >= deadline:
+            finish("; ".join(app.background_errors) or "The packaged layout check timed out")
+            return
+        view = app.active_view
+        summary = view.summary_bar
+        expected = 800 if not layout_widths else 1500
+        app.update_idletasks()
+        if app.winfo_width() != expected or summary.winfo_width() != expected - app.sidebar.winfo_width() or summary._layout_job is not None or view.diff_preview._render_job is not None:
+            app.after(30, poll_layout)
+            return
+        try:
+            for cell, labels in zip(summary.cells, summary.labels):
+                if not cell.winfo_ismapped() or cell.winfo_x() < 0 or cell.winfo_x() + cell.winfo_width() > summary.winfo_width() or cell.winfo_y() + cell.winfo_height() > summary.winfo_height():
+                    raise RuntimeError("A repository summary field is outside the available area")
+                for label in labels:
+                    if not label.winfo_ismapped() or label.winfo_x() + label.winfo_reqwidth() > cell.winfo_width() or label.winfo_y() + label.winfo_reqheight() > cell.winfo_height():
+                        raise RuntimeError(f"A repository summary caption or value is clipped: {labels[0].cget('text')}, label extent {label.winfo_x() + label.winfo_reqwidth()}x{label.winfo_y() + label.winfo_reqheight()}, cell {cell.winfo_width()}x{cell.winfo_height()}")
+            if sum(mode.sidebar.winfo_x() >= 0 for mode in app._sidebar_modes.values()) != 1:
+                raise RuntimeError("More than one sidebar layout is inside the window")
+            layout_widths.append(expected)
+            if expected == 800:
+                app.geometry("1500x800")
+                app.after(50, poll_layout)
+                return
+            pane = next(child for child in view.changes_tab.winfo_children() if isinstance(child, DeferredPanedwindow))
+            child = pane.nametowidget(pane.panes()[0])
+            width = child.winfo_width()
+            start = pane.sashpos(0)
+            pane.event_generate("<ButtonPress-1>", x=start, y=20)
+            if app.grab_current() is not pane:
+                raise RuntimeError("The divider did not capture the pointer")
+            for offset in range(3, 61, 3):
+                pane.event_generate("<B1-Motion>", x=start + offset, y=20)
+                app.update_idletasks()
+                if child.winfo_width() != width or pane.sashpos(0) != start:
+                    raise RuntimeError("Divider motion resized the content before release")
+            pane.event_generate("<ButtonRelease-1>", x=start + 60, y=20)
+            app.update_idletasks()
+            if pane.sashpos(0) != start + 60 or app.grab_current() is not None:
+                raise RuntimeError("The divider release did not commit and clean up")
+            result["layout"] = {
+                "status": "passed", "window_widths": layout_widths, "summary_fields_visible": len(summary.cells),
+                "divider_motions": 20, "resize_deferred_until_release": True, "pointer_grab_released": True,
+                "single_sidebar_visible": True,
+            }
+            result["status"] = "passed"
+            finish()
+        except Exception as error:
+            finish(str(error))
 
     def poll_interactions() -> None:
         nonlocal interactions
@@ -2246,8 +2317,14 @@ def repository_smoke_test(repository: Path, *, refreshes: int = 2, alternate_rep
             app.after(50, poll_interactions)
             return
         result["interactions"] = {"status": "passed", "sidebar_toggles": interactions, "project_switches": interactions, "drafts_preserved": True, "mapped_window": True}
-        result["status"] = "passed"
-        finish()
+        view = app.active_view
+        view.summary_vars["branch"].set("feature/" + "long-branch-name-" * 5)
+        view.summary_vars["upstream"].set("origin/feature/" + "long-branch-name-" * 5)
+        view.notebook.select(view.changes_tab)
+        view.diff_preview.render(FileVersions("before\n" * 300, "after\n" * 300, "HEAD", "Working tree"), "layout-check.txt")
+        app.minsize(640, 480)
+        app.geometry("800x800")
+        app.after(50, poll_layout)
 
     def poll() -> None:
         nonlocal completed

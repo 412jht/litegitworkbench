@@ -32,7 +32,7 @@ macOS or Linux:
 
 Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows portable package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
 
-Version 2.1.5 remains an unpublished test candidate. Its Windows EXE is a small MSVC launcher that runs the application with an adjacent, unmodified official CPython interpreter. Version 2.1.4's Python package passed the affected user's sidebar and manual project-selection checks, while its Nuitka EXE became unresponsive for an undetermined reason. The new package retains ordinary Python execution and supplies an EXE entry point with a complete runtime. Native compatibility and security-product behaviour require validation of this candidate.
+Version 2.1.6 remains an unpublished test candidate. It retains the small MSVC EXE launcher and adjacent official CPython runtime used by 2.1.5, for which the affected user tentatively reported no new Kaspersky alert. It improves divider dragging, Projects expansion/collapse and repository summary layout. Candidate acceptance still requires checks on the affected machine.
 
 ## Features
 
@@ -44,11 +44,14 @@ Version 2.1.5 remains an unpublished test candidate. Its Windows EXE is a small 
 - Preserve each open project's tabs, filters, selections, comparisons, console and commit draft during switching.
 - Keep cached project switches responsive while settings save in the background and large file previews load in batches.
 - Retain inactive project views without resizing them when the sidebar changes width.
+- Switch between retained, fixed expanded/collapsed sidebar layouts without reshaping controls or rewriting project rows.
+- Preview internal divider positions whilst dragging and resize the contents once on release; press Escape to cancel.
 - Remember the project list, sidebar state and most recently opened repository across restarts.
 - Show just the project name for the main worktree and `worktree-name / main-project` for linked worktrees.
 - Hover over project names or collapsed numbered shortcuts to see the complete name and absolute path.
 - Remove entries from Projects without deleting repositories, files, drafts or pending Git operations.
 - Display the current branch, HEAD, upstream, ahead/behind counts, working-tree state and worktree count.
+- Reflow summary fields into multiple rows and wrap long branch names when the available width is limited.
 - Refresh repository data concurrently to keep large repositories responsive.
 
 ### Branches and merging

@@ -19,7 +19,7 @@ from typing import Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_POLICY_PATH = PROJECT_ROOT / ".litegit-local-policy.json"
-VERSION = "2.1.5"
+VERSION = "2.1.6"
 
 
 def normalised_architecture() -> str:
@@ -276,6 +276,9 @@ def smoke_test(artefact: Path) -> dict[str, object]:
     if result.get("repository_check", {}).get("status") != "passed":
         raise RuntimeError(f"The packaged repository smoke test did not pass: {result}")
     if platform.system() == "Windows" and artefact.is_dir():
+        layout = result["repository_check"].get("layout", {})
+        if layout.get("status") != "passed" or layout.get("summary_fields_visible") != 6 or layout.get("resize_deferred_until_release") is not True or layout.get("pointer_grab_released") is not True:
+            raise RuntimeError("The packaged layout interaction check did not pass")
         if result["repository_check"]["runtime"].get("bundle_in_application_directory") is not True:
             raise RuntimeError("The directory bundle did not use its adjacent runtime")
         if result["repository_check"]["runtime"].get("packager") != "CPython launcher":

@@ -8,6 +8,7 @@ from typing import Callable, Sequence
 
 from litegit_diff import DiffRow, DirectoryPreview, FileVersions, aligned_diff
 from litegit_core import run_git
+from litegit_layout import DeferredPanedwindow
 from litegit_merge import ConflictFile, PendingUpdate, abort_update, conflict_regions, finish_update, pending_updates, read_conflict, save_resolution, unresolved_paths
 
 
@@ -130,7 +131,7 @@ class DiffPreview(ttk.Frame):
         self.pack(fill=tk.BOTH, expand=True)
         self.caption = tk.StringVar(value="Select a changed file to compare its versions.")
         ttk.Label(self, textvariable=self.caption).pack(fill=tk.X)
-        pane = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
+        pane = DeferredPanedwindow(self, orient=tk.HORIZONTAL)
         pane.pack(fill=tk.BOTH, expand=True)
         left, right = ttk.LabelFrame(pane, text="Before / HEAD"), ttk.LabelFrame(pane, text="After / working tree")
         pane.add(left, weight=1)
@@ -249,7 +250,7 @@ class ConflictEditor(tk.Toplevel):
             ("Use entire right", lambda: self.accept_file("theirs")),
         ):
             ttk.Button(tools, text=label, command=command).pack(side=tk.LEFT, padx=2)
-        pane = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
+        pane = DeferredPanedwindow(self, orient=tk.HORIZONTAL)
         pane.pack(fill=tk.BOTH, expand=True, padx=8)
         panels = []
         for label in ("Left / stage 2 (read only)", "Result (editable)", "Right / stage 3 (read only)"):

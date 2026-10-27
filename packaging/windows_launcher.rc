@@ -3,8 +3,8 @@
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_UK
 
 1 VERSIONINFO
-FILEVERSION 2,1,5,0
-PRODUCTVERSION 2,1,5,0
+FILEVERSION 2,1,6,0
+PRODUCTVERSION 2,1,6,0
 FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 FILEFLAGS 0
 FILEOS VOS_NT_WINDOWS32
@@ -17,11 +17,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "LiteGit Workbench contributors\0"
             VALUE "FileDescription", "LiteGit Workbench native launcher\0"
-            VALUE "FileVersion", "2.1.5\0"
+            VALUE "FileVersion", "2.1.6\0"
             VALUE "InternalName", "LiteGitWorkbench\0"
             VALUE "OriginalFilename", "LiteGitWorkbench.exe\0"
             VALUE "ProductName", "LiteGit Workbench\0"
-            VALUE "ProductVersion", "2.1.5\0"
+            VALUE "ProductVersion", "2.1.6\0"
         END
     END
     BLOCK "VarFileInfo"

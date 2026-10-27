@@ -1,5 +1,12 @@
 # Release notes
 
+## 2.1.6
+
+- Preview internal divider positions whilst dragging, then resize content once on release. Cover History, Local changes, before/after comparisons and three-pane conflict editors; cancel safely on Escape, hiding or closing the pane.
+- Retain separate fixed expanded and collapsed Projects layouts. Swap them without reshaping controls, rebuilding rows or resizing inactive project views; preserve project selection, keyboard focus and drafts.
+- Reflow the Branch / HEAD summary into multiple rows at narrower widths and wrap long values, keeping all six fields inside the available area.
+- Verify mapped geometry, pointer capture, cancellation and retained sidebar state without image capture. Retain the 2.1.5 Windows launcher/runtime approach and keep this candidate unpublished pending user acceptance.
+
 ## 2.1.5
 
 - Supply a native Windows EXE launcher with an adjacent, unmodified official CPython runtime and standard application archive. Double-click the EXE without installing Python separately.

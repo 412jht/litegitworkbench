@@ -6,6 +6,7 @@ import threading
 import time
 import tkinter as tk
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -136,16 +137,27 @@ class SwitchingResponsivenessTests(unittest.TestCase):
         process_events(self.root)
         events = []
         first.bind("<Configure>", lambda event: events.append(event), add="+")
+        mapping_events = []
+        for mode in self.root._sidebar_modes.values():
+            for sequence in ("<Map>", "<Unmap>"):
+                mode.sidebar.bind(sequence, lambda event: mapping_events.append(event))
         original_selection = self.root.project_tree.selection()
-        with patch.object(self.root.project_tree, "insert") as insert, patch.object(self.root.project_tree, "delete") as delete:
+        modes = dict(self.root._sidebar_modes)
+        with ExitStack() as patches:
+            edits = [patches.enter_context(patch.object(mode.project_tree, method)) for mode in modes.values() for method in ("insert", "delete", "item")]
             for _ in range(6):
                 self.root.toggle_sidebar()
                 expected = int(self.root.sidebar.cget("width"))
                 self.pump(lambda: self.root.sidebar.winfo_width() == expected and self.root.active_view.winfo_width() == self.root.winfo_width() - expected)
                 self.assertEqual(expected, self.root.active_view.winfo_x())
-            insert.assert_not_called()
-            delete.assert_not_called()
+                self.assertIs(modes[self.root.sidebar_collapsed].sidebar, self.root.sidebar)
+                self.assertEqual(1, sum(mode.sidebar.winfo_x() >= 0 for mode in modes.values()))
+                hidden = modes[not self.root.sidebar_collapsed].sidebar
+                self.assertLessEqual(hidden.winfo_x() + hidden.winfo_width(), 0)
+            for edit in edits:
+                edit.assert_not_called()
         self.assertEqual([], events)
+        self.assertEqual([], mapping_events)
         self.assertEqual(original_selection, self.root.project_tree.selection())
         self.assertEqual("Retain the hidden draft", first.commit_message_var.get())
         self.root.open_repository(str(self.projects[0]))
@@ -156,6 +168,26 @@ class SwitchingResponsivenessTests(unittest.TestCase):
         self.root.geometry("800x600")
         self.pump(lambda: self.root.winfo_width() == 800 and first.winfo_width() == 800 - self.root.sidebar.winfo_width())
         self.assertEqual(self.root.winfo_height(), first.winfo_height())
+
+    def test_hidden_sidebar_selection_events_do_not_switch_the_active_project(self) -> None:
+        hidden = self.root._sidebar_modes[not self.root.sidebar_collapsed].project_tree
+        hidden.selection_set("0")
+        with patch.object(self.root, "open_repository") as opened:
+            hidden.event_generate("<<TreeviewSelect>>")
+            process_events(self.root)
+            opened.assert_not_called()
+        self.assertEqual(self.projects[1], self.root.active_view.repository)
+
+    def test_sidebar_toggle_restores_sidebar_focus_and_keeps_editor_focus(self) -> None:
+        entry = tk.Entry(self.root.active_view)
+        old_tree = self.root.project_tree
+        new_tree = self.root._sidebar_modes[not self.root.sidebar_collapsed].project_tree
+        with patch.object(self.root, "focus_get", return_value=old_tree), patch.object(new_tree, "focus_set") as focus:
+            self.root.toggle_sidebar()
+            focus.assert_called_once_with()
+        with patch.object(self.root, "focus_get", return_value=entry), patch.object(old_tree, "focus_set") as focus:
+            self.root.toggle_sidebar()
+            focus.assert_not_called()
 
     def test_slow_settings_storage_does_not_block_switching_or_interface_events(self) -> None:
         entered, release = threading.Event(), threading.Event()
