@@ -16,9 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Windows portable
+          - name: Windows x64 and portable
             os: windows-latest
-            artefact: LiteGitWorkbench-Windows-Portable
+            artefact: LiteGitWorkbench-Windows
           - name: Linux x64
             os: ubuntu-22.04
             artefact: LiteGitWorkbench-Linux-X64
@@ -38,7 +38,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y python3-tk tk-dev
       - name: Install native build dependencies
-        if: runner.os != 'Windows'
         run: python -m pip install --upgrade pip && python -m pip install -r packaging/requirements-build.txt
       - name: Run tests
         run: python -m unittest discover -s tests -v
@@ -46,8 +45,7 @@ jobs:
         if: runner.os == 'Windows'
         run: python packaging/build_windows_portable.py
       - name: Build native release
-        if: runner.os != 'Windows'
-        run: python packaging/build_release.py
+        run: python packaging/build_release.py --build-dir build/native
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artefact }}
@@ -62,6 +60,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release-downloads
@@ -69,9 +68,9 @@ jobs:
         shell: bash
         run: |
           mkdir release-upload
-          find release-downloads -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.zip.json' -o -name '*.gz.json' \) -exec cp {} release-upload/ \;
+          find release-downloads -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.zip.json' -o -name '*.gz.json' \) -exec cp {} release-upload/ \;
           cd release-upload
-          find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' \) -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,5 +80,5 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release-upload/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" release-upload/* --generate-notes --title "LiteGit Workbench $GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" release-upload/* --notes-file CHANGELOG.md --title "LiteGit Workbench $GITHUB_REF_NAME"
           fi

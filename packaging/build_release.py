@@ -154,12 +154,15 @@ def package(artefact: Path, release_dir: Path) -> Path:
             bundle.write(artefact, "LiteGitWorkbench.exe")
             bundle.write(PROJECT_ROOT / "README.md", "README.md")
             bundle.write(PROJECT_ROOT / "RELEASE.md", "RELEASE.md")
+            bundle.write(PROJECT_ROOT / "CHANGELOG.md", "CHANGELOG.md")
+        shutil.copy2(artefact, archive.with_suffix(".exe"))
         return archive
     archive = release_dir / f"{base_name}.tar.gz"
     with tarfile.open(archive, "w:gz", compresslevel=9) as bundle:
         bundle.add(artefact, arcname=artefact.name, recursive=True)
         bundle.add(PROJECT_ROOT / "README.md", arcname="README.md")
         bundle.add(PROJECT_ROOT / "RELEASE.md", arcname="RELEASE.md")
+        bundle.add(PROJECT_ROOT / "CHANGELOG.md", arcname="CHANGELOG.md")
     return archive
 
 
@@ -204,6 +207,7 @@ def main() -> int:
         smoke = {"status": "passed", "result": smoke_test(artefact)}
     archive = package(artefact, arguments.output_dir.resolve())
     checksum = sha256(archive)
+    checksums = {archive.name: checksum}
     metadata = {
         "app": "LiteGit Workbench",
         "version": VERSION,
@@ -217,13 +221,26 @@ def main() -> int:
         "structural_verification": structure,
         "runtime_smoke_test": smoke,
     }
+    if platform.system() == "Windows":
+        executable = archive.with_suffix(".exe")
+        executable_checksum = sha256(executable)
+        checksums[executable.name] = executable_checksum
+        metadata["standalone_executable"] = {
+            "file": executable.name,
+            "sha256": executable_checksum,
+            "code_signing": "unsigned",
+        }
     metadata_path = archive.with_suffix(archive.suffix + ".json")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     checksum_path = arguments.output_dir.resolve() / "SHA256SUMS.txt"
     existing = []
     if checksum_path.exists():
-        existing = [line for line in checksum_path.read_text(encoding="utf-8").splitlines() if archive.name not in line]
-    existing.append(f"{checksum}  {archive.name}")
+        existing = [
+            line
+            for line in checksum_path.read_text(encoding="utf-8").splitlines()
+            if not any(line.endswith(f"  {filename}") for filename in checksums)
+        ]
+    existing.extend(f"{value}  {filename}" for filename, value in checksums.items())
     checksum_path.write_text("\n".join(sorted(existing)) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(metadata, ensure_ascii=False, indent=2))
     return 0

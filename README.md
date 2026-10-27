@@ -2,9 +2,9 @@
 
 LiteGit Workbench is a compact, cross-platform Git desktop application built with Python and Tk. It provides the everyday repository, branch, history, worktree and remote operations commonly expected from an IDE without carrying a full editor runtime.
 
-The source version requires Python 3.10 or later, Tkinter and Git. The Windows portable package has the same runtime requirements and intentionally contains no executable, DLL or native Python extension. Linux and macOS native packages include Python and Tk/Tcl, so those destination machines only need Git.
+The source version requires Python 3.10 or later, Tkinter and Git. The Windows portable package has the same runtime requirements and intentionally contains no executable, DLL or native Python extension. Windows x64, Linux and macOS native packages include Python and Tk/Tcl, so those destination machines only need Git.
 
-A checkout may disable local Windows executable packaging with an ignored `.litegit-local-policy.json` file. The supported Windows release builder never invokes PyInstaller and never creates an EXE.
+A checkout may disable local Windows executable packaging with an ignored `.litegit-local-policy.json` file. GitHub Actions builds both native and portable Windows packages. The separate portable builder uses only Python's standard library.
 
 ## Start from source
 
@@ -24,7 +24,8 @@ macOS or Linux:
 
 ## Downloadable releases
 
-- Windows: download the portable ZIP, extract it and double-click `run-portable.cmd`. An administrator-approved Python 3.10+ installation with Tkinter and Git must already be available.
+- Windows x64: download the standalone EXE and double-click it, or extract the native ZIP and run `LiteGitWorkbench.exe`. Git must already be available; Python and Tk/Tcl are included.
+- Windows portable: download the portable ZIP, extract it and double-click `run-portable.cmd`. An administrator-approved Python 3.10+ installation with Tkinter and Git must already be available.
 - Linux x64: extract `LiteGitWorkbench`, grant execute permission and run it.
 - macOS Intel: extract and open `LiteGit Workbench.app`.
 - macOS Apple Silicon: extract and open `LiteGit Workbench.app`.

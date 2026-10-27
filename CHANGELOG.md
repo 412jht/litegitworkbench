@@ -13,4 +13,5 @@
 - Compare local file versions side by side with aligned line numbers and coloured changes. Choose all, staged or unstaged changes.
 - Manage multiple Git directories in one window using a collapsible project sidebar. Retain each project's interface and draft while switching, and remember project paths across restarts.
 - Ignore outdated preview responses and keep each project's asynchronous results in its own session.
-- Include the comparison, merge and editor modules in Windows portable packaging; retain the non-EXE release format.
+- Include the comparison, merge and editor modules in Windows portable packaging.
+- Publish a standalone Windows x64 EXE and a native ZIP alongside the portable package, with bundled Python and Tk/Tcl, smoke-test metadata and SHA-256 values for both downloads.
