@@ -24,13 +24,15 @@ macOS or Linux:
 
 ## Downloadable releases
 
-- Windows x64: extract the complete native ZIP and run `LiteGitWorkbench.exe`. Keep all adjacent runtime files and directories in place; the EXE cannot run on its own. Git must already be available; Python and Tk/Tcl are included.
-- Windows portable: download the portable ZIP, extract it and double-click `run-portable.cmd`. An administrator-approved Python 3.10+ installation with Tkinter and Git must already be available.
+- Windows portable (recommended for 2.1.4 testing): extract the portable ZIP and double-click `run-portable.cmd`. Python 3.10+ with Tkinter and Git must already be available. Normal startup restores the last project.
+- Windows x64 native test candidate: extract the complete native ZIP and run `LiteGitWorkbench.exe`. Keep all adjacent runtime files and directories in place; the EXE cannot run on its own. Git must already be available; Python and Tk/Tcl are included. Compatibility on the affected Windows system remains unresolved.
 - Linux x64: extract `LiteGitWorkbench`, grant execute permission and run it.
 - macOS Intel: extract and open `LiteGit Workbench.app`.
 - macOS Apple Silicon: extract and open `LiteGit Workbench.app`.
 
 Version tags publish these packages as downloadable GitHub Release assets, not merely short-lived Actions artefacts. The Windows portable package contains `LiteGitWorkbench.pyz`, which is compressed application packaging rather than cryptographic obfuscation. See [RELEASE.md](RELEASE.md) for the complete build and compatibility notes.
+
+Version 2.1.4 remains an unpublished test candidate. On the affected Windows system, the user confirmed that sidebar expansion/collapse and manual project selection work in the Python package, and reported no Kaspersky alerts from script launches. The native candidate became unresponsive during sidebar testing; its cause has not been established. This feedback validates the tested Python interactions, not native EXE compatibility or every Git operation.
 
 ## Features
 
@@ -134,7 +136,7 @@ Projects use the main worktree name alone, for example `project`, and linked wor
 
 The project list is cached in `.litegit-projects.json` in the current running directory. The one-click launchers first change into their application directory, so source and portable launches keep the cache beside the application. Existing user settings are imported when no valid local cache exists. An empty local project list is respected after removals, and the cache is written atomically. Windows sharing and access errors are retried on the settings worker. If the local cache remains unavailable, the latest snapshot is saved under the user's application settings in a separate `project-caches` file for each running directory. The next launch uses the newer valid local or backup snapshot. If both locations fail, the previous files and current window remain available and the error is reported. Runtime project caches are excluded from Git.
 
-For startup investigation, use `start-without-restore.cmd` in the native Windows ZIP, or pass `--no-restore` to the application. This keeps saved project shortcuts available but waits for an explicit selection before running Git or saving project settings. Native Windows launches record local startup phases under `%LOCALAPPDATA%\LiteGitWorkbench\diagnostics`. The log contains timestamps, process identifiers and phase names; it does not record repository paths, command arguments or credentials. `LITEGIT_STARTUP_LOG` can select an explicit diagnostic file. No diagnostic data is uploaded.
+For daily portable use, double-click `run-portable.cmd` to restore the last project. For startup investigation, use `start-without-restore.cmd` in either Windows ZIP, or pass `--no-restore` to the application. This keeps saved project shortcuts available but waits for an explicit selection before running Git or saving project settings. The portable diagnostic launcher enables local startup logging; native Windows launches log automatically. Logs are stored under `%LOCALAPPDATA%\LiteGitWorkbench\diagnostics` and contain timestamps, process identifiers and phase names, without repository paths, command arguments or credentials. `LITEGIT_STARTUP_LOG` can select an explicit diagnostic file. No diagnostic data is uploaded.
 
 The Branches toolbar groups branch management, integration and tracking actions across the page. Local changes keeps its file actions on the left and the Compare controls at the top of the right pane. Branch, project and commit context menus also support Shift+F10 on a selected row; macOS supports Control-click.
 

@@ -5,6 +5,8 @@
 - Compile native Windows directory packages with pinned Nuitka 4.3.1 and MSVC after Kaspersky also blocked the 2.1.3 PyInstaller directory build. Preserve bundled Python/Tk and external Git DLL isolation. This changes the build pipeline and does not certify antivirus clearance.
 - Record local startup phases without repository paths, arguments or credentials. Distinguish Python entry, interface construction and external Git initialisation; tolerate unavailable diagnostic storage.
 - Add `--no-restore` and a diagnostic launcher that retain project shortcuts without automatically reopening a repository, querying worktree labels or saving project settings.
+- Include daily and diagnostic Python launchers in the portable Windows ZIP. Preserve the actual application exit status in both interpreter branches and verify quoted argument forwarding against the built package.
+- Record user acceptance of Python sidebar toggles and manual project selection. Recommend the Python package for current Windows testing; native EXE compatibility remains unresolved after an unresponsive sidebar session.
 - Recognise compiled application runtimes explicitly and preserve packaged commit editor reinvocation. Smoke-test both sequence and message helpers in native builds.
 - Remove bundled Tcl/Tk and Python-home paths from external Git environments while retaining user-configured paths outside the application.
 

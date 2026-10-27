@@ -90,6 +90,7 @@ def package(application: Path, output_dir: Path) -> Path:
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
         bundle.write(application, APPLICATION_ARCHIVE)
         bundle.write(PROJECT_ROOT / "packaging" / "run-portable.cmd", "run-portable.cmd")
+        bundle.write(PROJECT_ROOT / "packaging" / "start-portable-without-restore.cmd", "start-without-restore.cmd")
         bundle.write(PROJECT_ROOT / "README.md", "README.md")
         bundle.write(PROJECT_ROOT / "RELEASE.md", "RELEASE.md")
         bundle.write(PROJECT_ROOT / "CHANGELOG.md", "CHANGELOG.md")

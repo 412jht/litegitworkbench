@@ -1,5 +1,11 @@
 # LiteGit Workbench 2.1.4 release guide
 
+## Current validation status
+
+Version 2.1.4 is an unpublished test candidate. Use the Python portable package for current Windows testing. On 27 October 2026, the affected user confirmed that expanding/collapsing Projects and manually selecting a project work with this package. The user has observed no Kaspersky alerts from script launches. Other Git workflows still require their normal acceptance checks.
+
+The native 2.1.4 candidate became unresponsive during a sidebar check. Read-only inspection found suspended threads; the source of suspension remains unknown. The hang does not establish a new Kaspersky detection. Native EXE compatibility remains unresolved and has not been accepted for publication.
+
 ## Release targets
 
 | Target | Package | Recommended minimum |
@@ -20,11 +26,11 @@ The native Windows package uses Nuitka 4.3.1 with MSVC to compile a standalone d
 
 Version 2.1.1 isolates the frozen runtime's library search paths before launching external Git commands. Python extension modules retain their private DLL directory, while Git inherits the standard Windows DLL search path and a PATH without bundled runtime directories. Git is launched by its absolute executable path. This addresses a runtime isolation defect; it does not constitute antivirus certification or guarantee that every security product will allow the unsigned executable. Keep protection enabled during verification.
 
-Kaspersky reported the 2.1.2 test EXE through behaviour and memory inspection, and also reported the 2.1.3 PyInstaller directory EXE at startup. Their hashes match the recorded build artefacts. These observations do not establish a false-positive diagnosis or identify a precise trigger. Version 2.1.4 changes the Windows compiler and adds local phase diagnostics; its classification still requires verification on the affected machine with protection enabled. Automated build and smoke-test success does not establish antivirus clearance.
+Kaspersky reported the 2.1.2 test EXE through behaviour and memory inspection, and also reported the 2.1.3 PyInstaller directory EXE at startup. Their hashes match the recorded build artefacts. These observations do not establish a false-positive diagnosis or identify a precise trigger. Version 2.1.4 changes the Windows compiler and adds local phase diagnostics; its native compatibility investigation remains open. Automated build and smoke-test success does not establish antivirus clearance.
 
 Use `start-without-restore.cmd`, or the `--no-restore` argument, to open the interface without automatically opening the last repository or querying worktree labels. Saved project shortcuts remain available. Native Windows startup phases are written once per process under `%LOCALAPPDATA%\LiteGitWorkbench\diagnostics`; `LITEGIT_STARTUP_LOG` selects an explicit path. Phases distinguish Python entry, Tk creation, settings loading, interface construction, window mapping, repository selection and external Git preparation/launch/completion. Logs contain no repository path, command argument or credential, and are not uploaded. Missing log output cannot by itself prove that the runtime was the detection trigger.
 
-The portable Windows release uses the Python standard library's ZipApp format with ZIP compression. It contains no EXE, DLL, PyInstaller bootloader or native Python extension. After extraction, double-click `run-portable.cmd`; the launcher uses `py -3` when available and otherwise tries `python`.
+The portable Windows release uses the Python standard library's ZipApp format with ZIP compression. It contains no EXE, DLL, PyInstaller bootloader or native Python extension. After extraction, double-click `run-portable.cmd` for daily use and automatic restoration of the last project. The launcher uses `py -3` when available and otherwise tries `python`, forwarding arguments and the application's exit status. The portable `start-without-restore.cmd` enables a local phase log and waits for manual project selection. Starting in this diagnostic mode retains saved project shortcuts and leaves the normal launcher's restoration behaviour unchanged.
 
 ZipApp is a lightweight packaging shell. A recipient can inspect the Python modules in the archive. Neither the ZipApp nor the PyInstaller package provides cryptographic source protection.
 
@@ -40,7 +46,7 @@ This command uses only the Python standard library. It:
 
 1. creates `LiteGitWorkbench.pyz`;
 2. runs the archive's headless smoke test with the current Python runtime;
-3. packages the archive, launcher and documentation in a ZIP file;
+3. packages the archive, daily and diagnostic launchers, and documentation in a ZIP file;
 4. proves that the ZIP and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files;
 5. writes release metadata and a SHA-256 manifest.
 
@@ -72,7 +78,8 @@ A manual workflow run keeps the packages as Actions artefacts. Pushing a `v*` ta
 
 - The full test suite passes on every target.
 - The Windows ZipApp smoke test reports version `2.1.4` and `frozen: false`.
-- The Windows portable archive contains `LiteGitWorkbench.pyz` and `run-portable.cmd`.
+- The Windows portable archive contains `LiteGitWorkbench.pyz`, `run-portable.cmd` and its Python `start-without-restore.cmd` diagnostic launcher.
+- The extracted Windows portable launcher forwards paths containing spaces and returns the actual application exit status on success and failure.
 - The Windows portable archive and nested ZipApp contain no `.exe`, `.dll` or `.pyd` files.
 - The Windows native ZIP contains `LiteGitWorkbench.exe`, Python DLLs, the Tkinter extension, Tcl/Tk data and the remaining runtime files. No standalone EXE download is advertised. Its runtime reports `packager: Nuitka` and its metadata identifies the compiler and toolchain.
 - Windows, Linux and macOS packaged smoke tests report version `2.1.4` and `frozen: true`. This field means a native packaged application, including Nuitka builds that do not set `sys.frozen`.
